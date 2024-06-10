@@ -1,0 +1,4385 @@
+<!DOCTYPE html>
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <title>toothpick-like sequence exploration</title>
+    <meta charset="utf-8">
+    <script type="application/javascript" src="toothpick-like%20sequence%20exploration_files/pdfkit.js"></script>
+    <script type="application/javascript" src="toothpick-like%20sequence%20exploration_files/blob-stream.js"></script>
+    <!--
+        <script type="application/javascript" src="a139250.anim.draw.js"></script>
+    -->
+    <script type="application/javascript">
+'use strict';
+function Point(x, y, orient) {
+    this.x = x;
+    this.y = y;
+// keep orient === null
+    this.orient = (orient===undefined ? 0 : orient);
+};
+Point.prototype = {
+    idx: function() {
+	var max = this.x;
+	var v = 4*max*max - 3*max + this.y + 1;
+	if (this.y >= max) {
+	    max = this.y;
+	    v = 4*max*max - max - this.x + 1;
+	}
+	if (-this.x > max) {
+	    max = -this.x;
+	    v = 4*max*max + max - this.y + 1;
+	}
+	if (-this.y > max) {
+	    max = -this.y;
+	    v = 4*max*max + 3*max + this.x + 1;
+	}
+	if (max === 0) return 0;
+	else return v;
+    },
+    add: function(p) {
+	return new Point(this.x + p.x, this.y + p.y, p.orient);
+    },
+    add3: function(x,y,o) {
+	return new Point(this.x + x, this.y + y, o);
+    },
+    sub: function(p) {
+	return new Point(this.x - p.x, this.y - p.y, p.orient);
+    },
+    toString: function() {
+	return this.x + "," + this.y + "@" + this.orient;
+    },
+    normsq: function() {
+	return this.x*this.x + this.y*this.y;
+    }
+};
+
+function CoverSet() {
+    this.coveredpts = {};
+    this.openpts = {};
+};
+CoverSet.prototype = {
+    visit: function(p) {
+	var i = p.idx();
+	if (i in this.coveredpts) return;
+	if (i in this.openpts) {
+	    delete this.openpts[i];
+	    this.coveredpts[i] = new Point(p.x,p.y,null);
+	} else {
+	    this.openpts[i] = p;
+	}
+    },
+    isCovered: function(p) {
+	return this.coveredpts[p.idx()];
+    },
+    cover: function(p) {
+	var i = p.idx();
+	if (i in this.openpts) delete this.openpts[i];
+	this.coveredpts[i] = p;
+    },
+    get_openpts: function() {
+	var a = [];
+	for (var i in this.openpts) {
+	    var p = this.openpts[i];
+	    a.push(p);
+	}
+	return a;
+    },
+    cover_openpts: function() {
+	var a = [];
+	for (var i in this.openpts) {
+	    var p = this.openpts[i];
+	    this.coveredpts[i] = true;
+	    a.push(p);
+	}
+	this.openpts = {};
+	return a;
+    }
+};
+
+var TileType = {
+    NORMAL: 1,
+    DIAGONAL: 2,
+    CORNER: 3,
+    SPECIAL: 4,
+    SECTION: 5,
+    VARIANT: 6,
+    VARIANT2: 7,
+    VARIANT3: 8,
+    VARIANT4: 9,
+    OUTWARD: 10,
+    OUTCORNER: 11,
+    DOUBLE: 12,
+    TRIPLE: 13,
+    SNOWFLAKE: 14,
+    ISTART: 15,
+    LSTART: 16,
+    DOUBLEL: 17,
+    OUTSECTION: 18,
+    properties: {
+	name: {
+	    1: "NORMAL",
+	    2: "DIAGONAL",
+	    3: "CORNER",
+	    4: "SPECIAL",
+	    5: "SECTION",
+	    6: "VARIANT",
+	    7: "VARIANT2",
+	    8: "VARIANT3",
+	    9: "VARIANT4",
+           10: "OUTWARD",
+           11: "OUTCORNER",
+           12: "DOUBLE",
+           13: "TRIPLE",
+           14: "SNOWFLAKE",
+	   15: "ISTART",
+	   16: "LSTART",
+	   17: "DOUBLEL",
+           18: "OUTSECTION"
+	},
+        prettyname: {
+	    1: "Normal",
+	    2: "Diagonal",
+	    3: "Corner",
+	    4: "Special",
+	    5: "Section",
+	    6: "Variant",
+	    7: "Variant 2",
+	    8: "Variant 3",
+	    9: "Variant 4",
+           10: "Outward",
+           11: "Outward corner",
+           12: "Double start",
+           13: "Y start",
+           14: "Snowflake",
+	   15: "I start",
+	   16: "L start",
+	   17: "Double L start",
+           18: "Outward section"
+	}
+    }
+};
+
+function Anum_trim(s) {
+    if (s.length >= 1 && (s.charAt(0) == "A" || s.charAt(0) == "a")) {
+	return s.substring(1);
+    } else {
+	return s;
+    }
+}
+
+var Sequence = function() {
+    this.wid = 0.1;
+    this.defgap = 0.05;
+    this.wid2 = 0.0;
+    this.gap = 0.0;
+    this.gridwid = 0.5;
+    this.gridspace = 20.0;
+    this.axiswid = 1.0;
+    this.ys = 1;
+    this.yoffset = 0;
+    this.special_param = 0;
+};
+Sequence.prototype.initial_points = function(newlist, type) {
+    var tname = TileType.properties.name[type];
+    var l;
+    if (this.desc[tname] !== undefined) l = this.desc[tname].initial_points;
+    if (l === undefined) l = this.desc.initial_points;
+    if (l === undefined) l = [[0,0,0]];
+    for (var i=0; i < l.length; i++) {
+	newlist.push(new Point(l[i][0],l[i][1],l[i][2]));
+    }
+};
+Sequence.prototype.offset = function(type) {
+    var tname = TileType.properties.name[type];
+    var o;
+    if (this.desc[tname] !== undefined) o = this.desc[tname].offset;
+    if (o === undefined) o = this.desc.offset;
+    if (o === undefined) o = 0;
+    return o;
+};
+Sequence.prototype.compare_delta = function(type,mode) {
+    var tname = TileType.properties.name[type];
+    var o;
+    if (this.desc[tname] !== undefined) o = this.desc[tname]["compare_delta_"+mode];
+    if (o === undefined && this.desc[tname] !== undefined) o = this.desc[tname]["compare_delta"];
+    if (o === undefined) o = this.desc["compare_delta_"+mode];
+    if (o === undefined) o = this.desc["compare_delta"];
+    if (o === undefined) o = 0;
+    return o;
+};
+Sequence.prototype.extra_cover = function(cover, n, type) {
+};
+Sequence.applies = function(a,s) {
+    var d = (a).desc;
+    if (d === undefined) return false;
+    for (var type in TileType.properties.name) {
+	var tname = TileType.properties.name[type];
+	if (d[tname] !== undefined) {
+	    var v = d[tname].total;
+	    if (v !== undefined && Anum_trim(s) == Anum_trim(v)) return true;
+	    v = d[tname].incr;
+	    if (v !== undefined && Anum_trim(s) == Anum_trim(v)) return true;
+	}
+    }
+    return false;	
+};
+Sequence.prototype.size = function(n,type) {
+    var tnm = TileType.properties.name[type];
+    if (this.desc[tnm] && this.desc[tnm].size) {
+	return this.desc[tnm].size(n,this.ys);
+    }
+    if (this.desc && this.desc.size) {
+	return this.desc.size(n,this.ys);
+    }
+    return n+1;
+};
+// hack to be able to ask for total_name... without creating object
+Sequence.total_name = function(seq,type) {
+    var tnm = TileType.properties.name[type];
+    if (seq.desc[tnm] && seq.desc[tnm].total) {
+        if (seq.desc[tnm].conjectured) {
+	    return seq.desc[tnm].total + " (conj)";
+        } else {
+	    return seq.desc[tnm].total;
+        }
+    }
+    if (seq.desc.NORMAL && seq.desc.NORMAL.total) {
+	return seq.desc.NORMAL.total + " " + TileType.properties.prettyname[type];
+    }
+    return "unknown-sequence.total";
+};
+Sequence.prototype.total_name = function(type) {
+    return Sequence.total_name(this,type);
+};
+Sequence.total_url = function(seq,type) {
+    var tnm = TileType.properties.name[type];
+    if (seq.desc[tnm] && seq.desc[tnm].total) {
+	return "https://oeis.org/" + seq.desc[tnm].total;
+    }
+    return null;
+};
+Sequence.prototype.total_url = function(type) {
+    return Sequence.total_url(this,type);
+};
+Sequence.incr_name = function(seq,type) {
+    var tnm = TileType.properties.name[type];
+    if (seq.desc[tnm] && seq.desc[tnm].incr) {
+        if (seq.desc[tnm].conjectured) {
+	    return seq.desc[tnm].incr + " (conj)";
+        } else {
+	    return seq.desc[tnm].incr;
+        }
+    }
+    if (seq.desc.NORMAL && seq.desc.NORMAL.total) {
+	return seq.desc.NORMAL.total + " " + TileType.properties.prettyname[type];
+    }
+    return "unknown-sequence.total";
+};
+Sequence.prototype.incr_name = function(type) {
+    return Sequence.incr_name(this,type);
+};
+Sequence.incr_url = function(seq,type) {
+    var tnm = TileType.properties.name[type];
+    if (seq.desc[tnm] && seq.desc[tnm].incr) {
+	return "https://oeis.org/" + seq.desc[tnm].incr;
+    }
+    return null;
+};
+Sequence.prototype.incr_url = function(type) {
+    return Sequence.incr_url(this,type);
+};
+Sequence.prototype.draw = function(t,p,is_new) {
+    var poly;
+    if (this.desc.orientations) poly = this.desc.orientations[p.orient].polygon;
+    if (poly === undefined) poly = this.desc.polygon;
+    if (poly === undefined) {
+	var qc;
+	if (this.desc.orientations) qc = this.desc.orientations[p.orient].quarter_circle;
+	if (qc === undefined) qc = this.desc.quarter_circle;
+	if (qc) {
+	    var ys = this.ys;
+	    var yoffset = this.yoffset;
+	    var qcpts = qc(this.gap/ys,this.wid/ys,this.wid2/ys,(this.gap+this.wid2)/ys,ys,yoffset);
+	    var qclist = qcpts[0];
+	    if (qclist === undefined) {
+		console.log("qclist undefined");
+		return;
+	    }
+	    var cliplist = qcpts[1];
+	    var plist = [];
+	    for (var i=qclist.length-1; i>=0; i--) {
+		var x = p.x + qclist[i][0];
+		var y = p.y + qclist[i][1];
+		plist.push([x, y]);
+	    }
+	    var clist = [];
+	    for (var i=cliplist.length-1; i>=0; i--) {
+		var x = p.x + cliplist[i][0];
+		var y = p.y + cliplist[i][1];
+		clist.push([x, y]);
+	    }
+	    t.draw_qc (plist, clist, is_new);
+	    return;
+	}
+    }
+    if (poly === undefined) {
+	console.log("ERROR: no polygon for " + p);
+	return;
+    }
+    var ys = this.ys;
+    var yoffset = this.yoffset;
+    var epoly = poly(this.gap/ys,this.wid/ys,this.wid2/ys,(this.gap+this.wid2)/ys,ys,yoffset);
+    var plist = [];
+    for (var i=epoly.length-1; i>=0; i--) {
+	var x = p.x + epoly[i][0];
+	var y = p.y + epoly[i][1];
+	plist.push([x + y * yoffset, y * ys]);
+    }
+    t.draw_poly (plist, is_new);
+}
+Sequence.prototype.do_point = function(p, type) {
+    return true;
+};
+Sequence.prototype.get_neighbors = function(p, type) {
+    var tnm = TileType.properties.name[type];
+    if (this.desc[tnm] && this.desc[tnm].orientations) {
+        var nlist = this.desc[tnm].orientations[p.orient].neighbors;
+        if (nlist !== undefined) return nlist;
+    }
+    if (this.desc.orientations) {
+	var nlist = this.desc.orientations[p.orient].neighbors;
+	if (nlist !== undefined) return nlist;
+    }
+    if (this.desc[tnm] && this.desc[tnm].neighbors) {
+	return this.desc[tnm].neighbors;
+    }
+    return this.desc.neighbors;
+};
+Sequence.prototype.is_neighbor = function (p, type, q) {
+    var nlist = this.get_neighbors(p, type);
+    for (var i=0; i<nlist.length; i++) {
+	if (p.x + nlist[i][0] === q.x && p.y + nlist[i][1] === q.y) {
+	    return true;
+	}
+    }
+    return false;
+};
+Sequence.prototype.get_conflicts = function(p,type) {
+    var tnm = TileType.properties.name[type];
+    if (this.desc[tnm] && this.desc[tnm].orientations) {
+        var clist = this.desc[tnm].orientations[p.orient].conflicts;
+        if (clist !== undefined) return clist;
+    }
+    if (this.desc.orientations) {
+	var clist = this.desc.orientations[p.orient].conflicts;
+	if (clist !== undefined) return clist;
+    }
+    if (this.desc[tnm] && this.desc[tnm].conflicts) {
+	return this.desc[tnm].conflicts;
+    }
+    return this.desc.conflicts;
+};
+Sequence.prototype.is_conflict = function (p, type, q) {
+    var clist = this.get_conflicts(p, type);
+    for (var i=0; i<clist.length; i++) {
+	if (p.x + clist[i][0] === q.x && p.y + clist[i][1] === q.y) return true;
+    }
+    return false;
+};
+Sequence.prototype.generate = function(n, type, tot_list, tot_bfile, incr_list, incr_area) {
+    if (tot_list) tot_list.innerHTML='';
+    if (tot_bfile) tot_bfile.innerHTML='';
+    if (incr_list) incr_list.innerHTML='';
+    if (incr_bfile) incr_bfile.innerHTML='';
+    var cnt_total = 0;
+    var cnt_incr = 0;
+    this.iterate (n, type, this,
+		  function(ctx, p, is_new) {cnt_incr++;},
+		  function(ctx, i) {
+		      cnt_total += cnt_incr;
+		      if (tot_list) {
+			  if (i > this.offset(type)) tot_list.innerHTML += ",";
+			  tot_list.innerHTML += cnt_total.toString();
+		      }
+		      if (tot_bfile) tot_bfile.innerHTML += (i+1).toString() + " " + cnt_total.toString() + "\n";
+		      if (incr_list) {
+			  if (i > this.offset(type)) incr_list.innerHTML += ",";
+			  incr_list.innerHTML += cnt_incr.toString();
+		      }
+		      if (incr_bfile) incr_bfile.innerHTML += (i+1).toString() + " " + cnt_incr.toString() + "\n";
+		      cnt_incr = 0;
+		  });
+};
+Sequence.prototype.add_corner = function (t, type) {
+};
+Sequence.prototype.add_grid = function(t) {
+    this.add_rect_grid(t);
+};
+Sequence.prototype.add_axis = function(t) {
+    this.add_rect_axis(t);
+};
+Sequence.prototype.add_rect_grid = function(t) {
+    var step = 1;
+    while (step * t.scale < this.gridspace) step *= 2;
+
+    for (var x=step; x <= t.max_x(); x += step) {
+	t.draw_rect (x - this.gridwid / t.scale, t.min_y(),
+		     x + this.gridwid / t.scale, t.max_y());
+    }
+    for (var x = -step; x >= t.min_x(); x -= step) {
+	t.draw_rect (x - this.gridwid / t.scale, t.min_y(),
+		     x + this.gridwid / t.scale, t.max_y());
+    }
+
+    for (var y = step; y <= t.max_y(); y += step) {
+	t.draw_rect (t.min_x(), y - this.gridwid/t.scale,
+		     t.max_x(), y + this.gridwid/t.scale);
+    }
+    for (var y = -step; y >= t.min_y(); y -= step) {
+	t.draw_rect (t.min_x(), y - this.gridwid/t.scale,
+		     t.max_x(), y + this.gridwid/t.scale);
+    }
+};
+Sequence.prototype.add_rect_axis = function(t) {
+    t.draw_rect (t.min_x(), 0 - this.axiswid/t.scale,
+		 t.max_x(), 0 + this.axiswid/t.scale);
+    t.draw_rect (0 - this.axiswid/t.scale, t.min_y(),
+		 0 + this.axiswid/t.scale, t.max_y());
+};
+Sequence.prototype.add_tri_grid = function (t,step_) {
+    var step = (step_ || 1);
+    while (step * t.scale < this.gridspace) step *= 2;
+    
+    for (var y = step; y*Math.sqrt(3)/2 <= t.max_y(); y += step) {
+	t.draw_rect(t.min_x(), y*Math.sqrt(3)/2 - this.gridwid/t.scale,
+		    t.max_x(), y*Math.sqrt(3)/2 + this.gridwid/t.scale);
+    }
+    for (var y = -step; y*Math.sqrt(3)/2 >= t.min_y(); y -= step) {
+	t.draw_rect(t.min_x(), y*Math.sqrt(3)/2 - this.gridwid/t.scale,
+		    t.max_x(), y*Math.sqrt(3)/2 + this.gridwid/t.scale);
+    }
+    for (var x = step; x+t.min_y()/Math.sqrt(3) <= t.max_x(); x += step) {
+	t.draw_horiz_trap(x+t.min_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.min_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.min_y(),
+			  x+t.max_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.max_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.max_y());
+	t.draw_horiz_trap(x+t.max_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.max_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.min_y(),
+			  x+t.min_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.min_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.max_y());
+    }
+    for (var x = -step; x+t.max_y()/Math.sqrt(3) >= t.min_x(); x -= step) {
+	t.draw_horiz_trap(x+t.min_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.min_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.min_y(),
+			  x+t.max_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.max_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.max_y());
+	t.draw_horiz_trap(x+t.max_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.max_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.min_y(),
+			  x+t.min_y()/Math.sqrt(3) + this.gridwid/t.scale,
+			  x+t.min_y()/Math.sqrt(3) - this.gridwid/t.scale,
+			  t.max_y());
+    }
+};
+Sequence.prototype.add_tri_axis = function(t) {
+    t.draw_rect(t.min_x(), 0 - this.axiswid/t.scale,
+		t.max_x(), 0 + this.axiswid/t.scale);
+    t.draw_horiz_trap(t.min_y()/Math.sqrt(3) + this.axiswid/t.scale,
+		      t.min_y()/Math.sqrt(3) - this.axiswid/t.scale, t.min_y(),
+		      t.max_y()/Math.sqrt(3) + this.axiswid/t.scale,
+		      t.max_y()/Math.sqrt(3) - this.axiswid/t.scale, t.max_y());
+    t.draw_horiz_trap(t.max_y()/Math.sqrt(3) + this.axiswid/t.scale,
+		      t.max_y()/Math.sqrt(3) - this.axiswid/t.scale, t.min_y(),
+		      t.min_y()/Math.sqrt(3) + this.axiswid/t.scale,
+		      t.min_y()/Math.sqrt(3) - this.axiswid/t.scale, t.max_y());
+};
+
+function Toothpick() {
+    Sequence.call(this);
+};
+Toothpick.prototype = Object.create(Sequence.prototype);
+Toothpick.prototype.constructor = function() {
+    Sequence.call(this);
+};
+Toothpick.prototype.visit_neighbors = function(cover, p, type) {
+    var nlist = this.get_neighbors(p, type);
+    for (var i=0; i < nlist.length; i++) {
+	cover.visit(p.add3(nlist[i][0], nlist[i][1], nlist[i][2]));
+    }
+};
+Toothpick.prototype.iterate = function(n, type, ctx, got_point, finished_loop) {
+    if (n < this.offset(type)) return;
+    var cover = new CoverSet();
+    var newlist = [];
+    this.initial_points(newlist, type);
+    for (var i=0; i<newlist.length; i++) cover.cover(newlist[i]);
+    this.extra_cover (cover, n, type);
+    for (var i=this.offset(type); i<n; i++) {
+        var is_new = (i == n-1);
+	for (var j=0; j<newlist.length; j++) {
+	    var p = newlist[j];
+	    if (this.do_point (p, type)) {
+		cover.cover(p);
+		this.visit_neighbors (cover, p, type);
+		got_point.call(this,ctx,p,is_new);
+	    }
+	}
+	finished_loop.call(this,ctx,i);
+	if (this.prune_newlist) {
+	    newlist = cover.get_openpts();
+	    newlist = this.prune_newlist(newlist, type, cover);
+	    cover.cover_openpts();
+	} else {
+	    newlist = cover.cover_openpts();
+	}
+    }
+};
+
+function Automata() {
+    Sequence.call(this);
+};
+Automata.prototype = Object.create(Sequence.prototype);
+Automata.prototype.constructor = function() {
+    Sequence.call(this);
+};
+Automata.prototype.check_neighbors = function (p, type, onlist, newlist) {
+    var nlist = this.get_neighbors(p, type);
+    for (var j=0; j < nlist.length; j++) {
+	var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	if (q.idx() in onlist) continue;
+	newlist[q.idx()] = q;
+    }
+};
+Automata.prototype.neighbor_vals = function (p, type, onlist) {
+    var ret = []
+    var nlist = this.get_neighbors(p, type);
+    for (var j=0; j < nlist.length; j++) {
+	var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	if (q.idx() in onlist) ret.push(1);
+	else ret.push(0);
+    }
+    return ret;
+};
+Automata.prototype.iterate = function(n, type, ctx, got_point, finished_loop) {
+    if (n < this.offset(type)) return;
+    var onlist = {};
+    var offlist = {};
+    var newlist = []
+    this.initial_points(newlist, type);
+    for (var i=this.offset(type); i<n; i++) {
+	var gen = i+1;
+        var is_new = (gen == n);
+	for (var j=0; j<newlist.length; j++) {
+	    var p = newlist[j];
+	    onlist[p.idx()] = p;
+	    got_point.call(this,ctx,p,is_new)
+	}
+        var candlist = {};
+	for (var j=0; j<newlist.length; j++) {
+	    var p = newlist[j];
+	    this.check_neighbors (p, type, onlist, candlist);
+	}
+	newlist = [];
+	for (var j in candlist) {
+	    var p = candlist[j];
+	    var s = this.state (p, gen, type, onlist, candlist, offlist);
+	    if (s) {
+		newlist.push(new Point(p.x, p.y, gen));
+	    } else {
+                offlist[p.idx()] = p;
+            }
+	}
+	if (this.prune_newlist) {
+	    newlist = this.prune_newlist (gen, newlist, type, onlist, offlist);
+	}
+	finished_loop.call(this,ctx,i);
+    }
+};
+
+function A139250() {
+    Toothpick.call(this);
+    this.desc = A139250.desc;
+};
+A139250.prototype = Object.create(Toothpick.prototype);
+A139250.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A139250.desc = {
+    name: "A139250",
+    label: "A139250 - toothpick",
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-wid, 1-gapw],[wid, 1-gapw],[wid,-1+gapw],[-wid,-1+gapw]];
+	    },
+	    neighbors: [[0,1,1],[0,-1,1]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gapw,wid],[1-gapw,wid],[1-gapw,-wid],[-1+gapw,-wid]];
+	    },
+	    neighbors: [[1,0,0],[-1,0,0]]
+	}
+    },
+    NORMAL: {total: "A139250",incr: "A139251"},
+    CORNER: {total: "A153006", incr: "A152980",
+             compare_delta_incr: 1},
+    SECTION: {total: "A153000", incr: "A152978",
+	       offset: 0,
+	       initial_points: [[1,1,0]],
+	       size: function(n) {return n+3;}
+    },
+    OUTWARD: {total: "A131098", incr: "A151798",
+              compare_delta_incr: 1},
+    OUTCORNER: {total: "A008486", incr: "A158799",
+                offset: -1,
+	        size: function(n) {return n+2;}
+    }
+//    VARIANT2: {},
+//    VARIANT3: {}
+};
+A139250.prototype.extra_cover = function (cover, n, type) {
+    if (type == TileType.SPECIAL && n >= 2 && (n & (n-1)) == 0) {
+	cover.cover(new Point(n/2-1, -n/2));
+    }
+};
+A139250.prototype.do_point = function(p, type) {
+    if ((type == TileType.SPECIAL || type == TileType.CORNER) &&
+	!(p.x >= 0 || p.y > 0)) return false;
+    if (type == TileType.SECTION && (p.x <= 0 || p.y <= 0)) return false;
+    if (type == TileType.VARIANT3 && (p.x < 0 || p.y >= 0) && !(p.x == 0 && p.y == 0)) return false;
+    if (type == TileType.VARIANT2 && p.y <= 0 && !(p.x == 0 && p.y == 0)) return false;
+    if (type == TileType.OUTCORNER && !(p.x >= 0 || p.y > 0)) return false;
+
+    return true;
+};
+A139250.prototype.visit_neighbors = function (cover, p, type) {
+    if (type == TileType.OUTWARD || type == TileType.OUTCORNER) {
+        if (p.orient === 0) {
+	    var d = new Point(0,1,1);
+	    if (p.y <= 0) cover.visit (p.sub (d));
+	    if (p.y >= 0) cover.visit (p.add (d));
+        } else {
+	    var d = new Point(1,0,0);
+	    if (p.x <= 0) cover.visit (p.sub (d));
+	    if (p.x >= 0) cover.visit (p.add (d));
+        }
+    } else {
+        Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+    }
+};
+A139250.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+    case TileType.SPECIAL:
+    case TileType.VARIANT2:
+    case TileType.VARIANT3:
+    case TileType.OUTCORNER:
+	if (this.gap > 0.0 && -(t.min_x()) < 100) {
+	    for (var i=-1; i+1 >= t.min_x(); i -= 2) {
+		this.draw(t, new Point(i,0,1));
+	    }
+	    for (var i=-1; i+1 >= t.min_y(); i -= 2) {
+		this.draw(t, new Point(-1,i,0));
+	    }
+	} else {
+	    t.draw_rect(t.min_x(), -this.wid, -this.wid, this.wid);
+	    t.draw_rect(-1-this.wid, t.min_y(), -1+this.wid, 0.0);
+	}
+	break;
+    case TileType.SECTION:
+	t.draw_rect (-this.wid, -this.wid, t.max_x(), this.wid);
+	t.draw_rect (-this.wid, this.wid, this.wid, t.max_y());
+	t.draw_rect (this.wid, 1-this.wid, 1, 1+this.wid);
+	break;
+    default:
+	break;
+    }
+};
+
+
+
+
+
+
+function knight() {
+    Toothpick.call(this);
+    this.desc = knight.desc;
+}
+knight.prototype = Object.create(Toothpick.prototype);
+knight.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+knight.desc = {
+    name: "knight",
+    label: "knight",
+    size: function(n) {return n*4-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-2,1,0],[-1,2,0],[1,2,0],[2,1,0],[2,-1,0],[1,-2,0],[-1,-2,0],[-2,-1,0]],  //modify this
+    NORMAL: {total: "knight", incr: "A147582", priority: 1},
+};
+knight.prototype.do_point = function(p, type) {
+    return true;
+};
+knight.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+
+function corner() {
+    Toothpick.call(this);
+    this.desc = corner.desc;
+}
+corner.prototype = Object.create(Toothpick.prototype);
+corner.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+corner.desc = {
+    name: "corner",
+    label: "corner",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[0,1,0],[1,1,0],[1,0,0]],  //modify this
+    NORMAL: {total: "corner", incr: "A147582", priority: 1},
+};
+corner.prototype.do_point = function(p, type) {
+    return true;
+};
+corner.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+function y_analog() {
+    Toothpick.call(this);
+    this.desc = y_analog.desc;
+}
+y_analog.prototype = Object.create(Toothpick.prototype);
+y_analog.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+y_analog.desc = {
+    name: "y_analog",
+    label: "y_analog",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[0,1,0],[-1,-1,0],[1,-1,0]],  //modify this
+    NORMAL: {total: "y_analog", incr: "A147582", priority: 1},
+};
+y_analog.prototype.do_point = function(p, type) {
+    return true;
+};
+y_analog.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+function tetris_piece() {
+    Toothpick.call(this);
+    this.desc = tetris_piece.desc;
+}
+tetris_piece.prototype = Object.create(Toothpick.prototype);
+tetris_piece.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+tetris_piece.desc = {
+    name: "tetris_piece",
+    label: "tetris_piece",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[0,1,0],[-1,0,0],[1,0,0]],  //modify this
+    NORMAL: {total: "tetris_piece", incr: "A147582", priority: 1},
+};
+tetris_piece.prototype.do_point = function(p, type) {
+    return true;
+};
+tetris_piece.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+
+
+function batarang() {
+    Toothpick.call(this);
+    this.desc = batarang.desc;
+}
+batarang.prototype = Object.create(Toothpick.prototype);
+batarang.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+batarang.desc = {
+    name: "batarang",
+    label: "batarang",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[1,1,0],[1,0,0],[0,-1,0], [-1,-1,0]],  //modify this
+    NORMAL: {total: "batarang", incr: "A147582", priority: 1},
+};
+batarang.prototype.do_point = function(p, type) {
+    return true;
+};
+batarang.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+function ytoothpickanalog() {
+    Toothpick.call(this);
+    this.desc = ytoothpickanalog.desc;
+}
+ytoothpickanalog.prototype = Object.create(Toothpick.prototype);
+ytoothpickanalog.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+ytoothpickanalog.desc = {
+    name: "ytoothpickanalog",
+    label: "ytoothpickanalog",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[0,1,0],[1,0,0],[-1,-1,0]],  //modify this
+    NORMAL: {total: "ytoothpickanalog", incr: "A147582", priority: 1},
+	CORNER: {total: "A161426", incr: "A161427",},
+	OUTWARD: {total: "A161426", incr: "A161427", },
+	OUTCORNER: {total: "A161426", incr: "A161427", },
+};
+ytoothpickanalog.prototype.do_point = function(p, type) {
+    if (type == TileType.CORNER) {
+		return p.x >= 0 && p.y >= 2 * p.x;
+	}
+	if (type == TileType.OUTWARD) {
+		return p.x >= 0 && p.y >= 0;
+	}
+	if (type == TileType.OUTCORNER) {
+		return p.x <= 0 && p.y >= -p.x; 
+	}
+    return true;
+};
+ytoothpickanalog.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+function sierpienski() {
+    Toothpick.call(this);
+    this.desc = sierpienski.desc;
+}
+sierpienski.prototype = Object.create(Toothpick.prototype);
+sierpienski.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+sierpienski.desc = {
+    name: "sierpienski",
+    label: "sierpienski",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[1,1,0],[1,-1,0]],  //modify this
+    NORMAL: {total: "sierpienski", incr: "A147582", priority: 1},
+};
+sierpienski.prototype.do_point = function(p, type) {
+    return true;
+};
+sierpienski.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+function sierpienski() {
+    Toothpick.call(this);
+    this.desc = sierpienski.desc;
+}
+sierpienski.prototype = Object.create(Toothpick.prototype);
+sierpienski.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+sierpienski.desc = {
+    name: "sierpienski",
+    label: "sierpienski",
+    size: function(n) {return n*2-1;},  //and this 
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[1,1,0],[1,-1,0]],  //modify this
+    NORMAL: {total: "sierpienski", incr: "A147582", priority: 1},
+};
+sierpienski.prototype.do_point = function(p, type) {
+    return true;
+};
+sierpienski.prototype.visit_neighbors = function (cover, p, type) {
+	Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+}
+
+
+
+
+function A147562() {
+    Toothpick.call(this);
+    this.desc = A147562.desc;
+}
+A147562.prototype = Object.create(Toothpick.prototype);
+A147562.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A147562.desc = {
+    name: "A147562",
+    label: "A147562 - Ulam-Warburton",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0]],
+    NORMAL: {total: "A147562", incr: "A147582", priority: 1},
+    DIAGONAL: {total: "A147562", incr: "A147582", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,-1,0],[1,1,0]]},
+    CORNER: {total: "A130665", incr: "A048883",
+             compare_delta: 1},
+    OUTWARD: {total: "A160720", incr: "A160721"},
+    OUTCORNER: {total: "A159912", incr: "A159913",
+                priority: 1, compare_delta_incr: 1},
+    OUTSECTION: {total: "A267700", incr: "A038573",
+                 priority: 1,
+                 size: function(n) {return n*2+1;},
+                 initial_points: [[1,0,0]]}
+};
+A147562.prototype.do_point = function(p, type) {
+    if ((type == TileType.CORNER || type == TileType.OUTCORNER) &&
+        p.y < 0 && p.x >= p.y && p.x <= -p.y) return false;
+    if (type == TileType.OUTSECTION &&
+        (p.y >= p.x || p.y <= -p.x)) return false;
+    return true;
+};
+A147562.prototype.visit_neighbors = function (cover, p, type) {
+    if (type == TileType.OUTWARD || type == TileType.OUTSECTION) {
+        if (p.x <= 0) cover.visit (p.add (new Point(-1,0)));
+        if (p.x >= 0) cover.visit (p.add (new Point(1,0)));
+        if (p.y <= 0) cover.visit (p.add (new Point(0,-1)));
+        if (p.y >= 0) cover.visit (p.add (new Point(0,1)));
+    } else if (type == TileType.OUTCORNER) {
+        if (p.x <= 0) cover.visit (p.add (new Point(-1,0)));
+        if (p.x >= 0) cover.visit (p.add (new Point(1,0)));
+        if (p.y >= 0) cover.visit (p.add (new Point(0,1)));
+    } else {
+        Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+    }
+}
+A147562.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+    case TileType.OUTCORNER:
+	if (-(t.min_x()) < 100) {
+	    for (var i=0; i <= t.max_x()+0.5 && -1-i >= t.min_y()-0.5; ++i) {
+		this.draw(t, new Point(i,-1-i));
+	    }
+	    for (var i=-1; i >= t.min_x()-0.5 && i-1 >= t.min_y()-0.5; --i) {
+		this.draw(t, new Point(i, i-1));
+	    }
+	} else {
+	    t.draw_vert_trap(t.min_x(), t.min_x()-1, t.min_x(), -0.5, -1.5, -0.5);
+	    t.draw_rect(-0.5, -1.5, 0.5, -0.5);
+	    t.draw_vert_trap(0.5, -1.5, -0.5, t.max_x(), -t.max_x()-1, -t.max_x());
+	}
+	break;
+    case TileType.OUTSECTION:
+//	if (-(t.min_x()) < 100) {
+//	    for (var i=0; i <= t.max_x()+0.5 && -i >= t.min_y()-0.5; ++i) {
+//		this.draw(t, new Point(i,-i));
+//	    }
+//	    for (var i=1; i <= t.max_x()+0.5 && i <= t.max_y()+0.5; ++i) {
+//		this.draw(t, new Point(i,i));
+//	    }
+//	} else {
+	    t.draw_horiz_trap(t.max_y()-1, t.max_y(),t.max_y(),-1,0,0);
+//	    t.draw_rect(-0.5, -0.5, 0.5, 0.5);
+	    t.draw_horiz_trap(-1, 0, 0, -t.min_y()-1,-t.min_y(),t.min_y());
+//	}
+	break;
+    default:
+	break;
+    }
+};
+
+function A151907() {
+    Toothpick.call(this);
+    this.desc = A151907.desc;
+}
+A151907.prototype = Object.create(Toothpick.prototype);
+A151907.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A151907.desc = {
+    name: "A151907",
+    label: "A151907 - Holladay-Ulam CA",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    NORMAL: {
+        total: "A151907", incr: "A151906",
+        priority: 1,
+        orientations: {
+            0: {
+                neighbors: [[1,0,1],[0,1,2],[-1,0,3],[0,-1,4]],
+                conflicts: []
+            },
+            1: {
+                neighbors: [[-1,0,0],[1,0,3]],
+                conflicts: [[-1,2,4],[-1,-2,2],[-3,0,1]]
+            },
+            2: {
+                neighbors: [[0,-1,0],[0,1,4]],
+                conflicts: [[-2,-1,1],[2,-1,3],[0,-3,2]]
+            },
+            3: {
+                neighbors: [[1,0,0],[-1,0,1]],
+                conflicts: [[1,-2,2],[1,2,4],[3,0,3]]
+            },
+            4: {
+                neighbors: [[0,1,0],[0,-1,2]],
+                conflicts: [[2,1,3],[-2,1,1],[0,3,4]]
+            }
+        },
+    },
+    DIAGONAL: {
+        total: "A151907", incr: "A151906",
+        priority: 0,
+        orientations: {
+            0: {
+                neighbors: [[1,1,1],[-1,1,2],[-1,-1,3],[1,-1,4]],
+                conflicts: []
+            },
+            1: {
+                neighbors: [[-1,-1,0],[1,1,3]],
+                conflicts: [[-3,1,4],[1,-3,2],[-3,-3,1]]
+            },
+            2: {
+                neighbors: [[1,-1,0],[-1,1,4]],
+                conflicts: [[-1,-3,1],[3,1,3],[3,-3,2]]
+            },
+            3: {
+                neighbors: [[1,1,0],[-1,-1,1]],
+                conflicts: [[3,-1,2],[-1,3,4],[3,3,3]]
+            },
+            4: {
+                neighbors: [[-1,1,0],[1,-1,2]],
+                conflicts: [[1,3,3],[-3,-1,1],[-3,3,4]]
+            }
+        },
+    }
+};
+A151907.prototype.prune_newlist = function (newlist, type, cover) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+        var has_zero = false;
+        var nlist = this.get_neighbors(p, type);
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    if (q.orient === 0 && cover.isCovered(q)) {
+		has_zero = true;
+		break;
+	    }
+	}
+	var keep = true;
+        if (!has_zero) {
+	    var clist = this.get_conflicts(p, type);
+	    for (var j=0; j < clist.length; j++) {
+	        var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+//	        if (newmap[q.idx()]) {
+	        if (cover.isCovered(q)) {
+		    keep = false;
+		    break;
+	        }
+	    }
+        }
+	if (keep) ret.push(p);
+    }
+    return ret;
+};
+
+function A151725() {
+    Toothpick.call(this);
+    this.desc = A151725.desc;
+}
+A151725.prototype = Object.create(Toothpick.prototype);
+A151725.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A151725.desc = {
+    name: "A151725",
+    label: "A151725 - 8-neighbor squares",
+    size: function(n) {return n*2-1;},
+    neighbors: [[-1,-1,0],[-1,0,0],[-1,1,0],[0,-1,0],[0,1,0],[1,-1,0],[1,0,0],[1,1,0]],
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    NORMAL: {total: "A151725", incr: "A151726"},
+    CORNER: {total: "A170880", incr: "A151728",
+             compare_delta_incr: 1},
+    VARIANT: {total: "A170879", incr: "A151747"}
+};
+A151725.prototype.do_point = function(p, type) {
+    if (type == TileType.CORNER && p.y <= 0 && p.x <= 0 && !(p.x == 0 && p.y == 0)) return false;
+    if (type == TileType.VARIANT && p.y <= 1 && p.x <= 0 && !(p.x == 0 && p.y == 0)) return false;
+    return true;
+};
+A151725.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+      if (this.gap > 0.0 && -t.min_x() < 100) {
+	for (var i=-1; i >= t.min_x()-0.5; --i) {
+	  this.draw (t, new Point(i,-1));
+	}
+	for (var i=-2; i >= t.min_y()-0.5; --i) {
+	  this.draw (t, new Point(-1,i));
+	}
+      } else {
+	t.draw_rect(t.min_x(),-1.5,-0.5,-0.5);
+	t.draw_rect (-1.5,t.min_y(),-0.5,-1.5);
+      }
+      break;
+    case TileType.VARIANT:
+      if (this.gap > 0.0 && -t.min_x() < 100) {
+	for (var i=-1; i >= t.min_x()-0.5; --i) {
+	  this.draw (t, new Point(i,0));
+	}
+	for (var i=-1; i >= t.min_y()-0.5; --i) {
+	  this.draw (t, new Point(-1,i));
+	}
+      } else {
+	t.draw_rect(t.min_x(),-0.5,-0.5,0.5);
+	t.draw_rect (-1.5,t.min_y(),-0.5,-0.5);
+      }
+      break;
+    default:
+	break;
+    }
+};
+
+function A160120() {
+    Toothpick.call(this);
+    this.desc = A160120.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}
+A160120.prototype = Object.create(Toothpick.prototype);
+A160120.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A160120.desc = {
+    name: "A160120",
+    label: "A160120 - Y-toothpick",
+    size: function(n) {return n*2;},
+	polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]] }, 
+	/*
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[0,wid],[1-gapw-wid,wid],[1-gapw,0],[1-gapw,-wid],
+		[wid,-wid],[wid,-1+gapw],[0,-1+gapw],[-wid,-1+gapw+wid],
+		[-wid,0],[-1+gapw,1-(gapw+wid)],[-1+gapw,1-gapw],[-1+gapw+wid,1-gapw]];
+    },
+	*/
+    neighbors: [[1,0,0],[-1,1,0],[0,-1,0]],
+    NORMAL: {total: "A160120", incr: "A160121"},
+    CORNER: {total: "A161426", incr: "A161427"},
+    OUTWARD: {total: "A266532", incr: "A266533"},
+    OUTCORNER: {total: "A159912", incr: "A159913",
+                priority: 0, compare_delta_incr: 1},
+    OUTSECTION: {total: "A267700", incr: "A038573",
+                 priority: 0,
+                 size: function(n) {return n*2+2;},
+                 initial_points: [[1,0,0]]}
+};
+A160120.prototype.norm = function(p) {
+    return Math.max(p.x+2*p.y,p.x-p.y,-2*p.x-p.y);
+};
+A160120.prototype.cornernorm = function(p) {
+    return Math.max(p.x+2*p.y,p.x-p.y);
+};
+A160120.prototype.visit_neighbors = function (cover, p, type) {
+    if (type == TileType.OUTWARD || type == TileType.OUTSECTION) {
+        var nlist = this.get_neighbors(p, type);
+        var pnorm = this.norm(p);
+        for (var i=0; i < nlist.length; i++) {
+            var q = p.add3(nlist[i][0], nlist[i][1], nlist[i][2]);
+            if (this.norm(q) >= pnorm) {
+	        cover.visit(q);
+            }
+        }
+    } else if (type == TileType.OUTCORNER) {
+        var nlist = this.get_neighbors(p, type);
+        var pnorm = this.norm(p);
+        for (var i=0; i < nlist.length; i++) {
+            var q = p.add3(nlist[i][0], nlist[i][1], nlist[i][2]);
+            if (this.cornernorm(q) >= pnorm) {
+	        cover.visit(q);
+            }
+        }
+    } else {
+        Toothpick.prototype.visit_neighbors.call (this, cover, p, type);
+    }        
+};
+A160120.prototype.do_point = function(p, type) {
+    if ((type == TileType.CORNER || type == TileType.OUTCORNER) &&
+        p.x + 2*p.y <= 0 && p.x <= p.y && !(p.x == 0 && p.y == 0)) return false;
+    if ((type == TileType.OUTSECTION) &&
+        (p.x <= 0 || p.x <= -p.y)) return false;
+    return true;
+};
+A160120.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+    case TileType.OUTCORNER:
+      if (-t.min_x() < 100) {
+	for (var i=0; -2*i + i/2.0 >= t.min_x() && i-1 <= t.max_y(); ++i) {
+	  this.draw (t, new Point(-2*i-1,i));
+	}
+	for (var i=-2; i+1 + (i+1)/2.0 >= t.min_x() && i+2 >= t.min_y(); --i) {
+	  this.draw (t, new Point(i,i+1));
+	}
+      } else {
+	t.draw_horiz_trap (t.min_x()-2,t.min_x(),-2.0/3.0*(t.min_x()*this.ys+1),
+			   -3.0,-1.0,0.0);
+	t.draw_horiz_trap (-3.0,-1.0,0.0,
+			   t.min_x()-2,t.min_x(),2.0/3.0*(t.min_x()*this.ys+1));
+      }
+      break;
+    case TileType.OUTSECTION:
+//      if (-t.min_x() < 100) {
+//	for (var i=0; i-1 <= t.max_y(); ++i) {
+//	  this.draw (t, new Point(0,i));
+//	}
+//	for (var i=1; -i+1 >= t.min_y(); ++i) {
+//	  this.draw (t, new Point(i,-i));
+//	}
+//      } else {
+	t.draw_horiz_trap (t.max_y()/(2*this.ys)-1,t.max_y()/(2*this.ys),t.max_y(),
+                           -1,0,0);
+	t.draw_horiz_trap (-1,0,0,
+			   -t.min_y()/(2*this.ys)-1,-t.min_y()/(2*this.ys),t.min_y());
+//      }
+      break;
+    default:
+	break;
+    }
+};
+A160120.prototype.add_grid = function(t) {
+    this.add_tri_grid (t);
+}
+A160120.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+
+
+
+
+
+
+
+
+function A161206() {
+    Toothpick.call(this);
+    this.desc = A161206.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}
+A161206.prototype = Object.create(Toothpick.prototype);
+A161206.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A161206.desc = {
+    name: "A161206",
+    label: "A161206 - V-toothpick",
+    size: function(n,ys) {return n*2*ys;},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[-wid,wid],[-wid,1-gap],[0,1-gap],[wid,1-gap-wid],[wid,0],
+		        [1-gap,-1+wid+gap],[1-gap,-1+gap],[1-gap-wid,-1+gap],[0,-wid]];
+	    },
+	    neighbors: [[0,1,1],[1,-1,5]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[-wid,0],[-1+gap,1-gap-wid],[-1+gap,1-gap],[-1+gap+wid,1-gap],[0,wid],
+			[1-gap-wid,wid],[1-gap,0],[1-gap,-wid],[wid,-wid]];
+	    },
+	    neighbors: [[-1,1,2],[1,0,0]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[0,-wid],[-1+gap+wid,-wid],[-1+gap,0],[-1+gap,wid],
+			[-wid,wid],[-wid,1-gap],[0,1-gap],[wid,1-gap-wid],[wid,0]];
+	    },
+	    neighbors: [[-1,0,3],[0,1,1]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[wid,-wid],[wid,-1+gap],[0,-1+gap],[-wid,-1+wid+gap],
+			[-wid,0],[-1+gap,1-gap-wid],[-1+gap,1-gap],[-1+gap+wid,1-gap],[0,wid]];
+	    },
+	    neighbors: [[0,-1,4],[-1,1,2]]
+	},
+	4: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[wid,0],[1-gap,-1+wid+gap],[1-gap,-1+gap],[1-gap-wid,-1+gap],[0,-wid],
+			[-1+gap+wid,-wid],[-1+gap,0],[-1+gap,wid],[-wid,wid]];
+	    },
+	    neighbors: [[1,-1,5],[-1,0,3]]
+	},
+	5: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[0,wid],[1-gap-wid,wid],[1-gap,0],[1-gap,-wid],[wid,-wid],
+			[wid,-1+gap],[0,-1+gap],[-wid,-1+wid+gap],[-wid,0]];
+	    },
+	    neighbors: [[1,0,0],[0,-1,4]]
+	},
+        h0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[gap,0],[gap,wid],[1-gap-wid,wid],[1-gap,0],[1-gap,-wid],[gap+wid,-wid]];
+	    },
+	    neighbors: [[1,0,0]]
+	},
+        h2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,1-gap],[-1+gap+wid,1-gap],[-gap,gap+wid],[-gap,gap],[-gap-wid,gap],[-1+gap,1-gap-wid]];
+	    },
+	    neighbors: [[-1,1,2]]
+	},
+        h4: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,-1+gap],[-wid,-1+gap+wid],[-wid,-gap],[0,-gap],[wid,-gap-wid],[wid,-1+gap]];
+	    },
+	    neighbors: [[0,-1,4]]
+	}
+    },
+    NORMAL: {total: "A161206", incr: "A161207"},
+    CORNER: {total: "A170883", incr: "A170882",
+             conjectured: true, priority: 0,
+             initial_points: [[1,0,0]],
+	     size: function(n,ys) {return Math.max(n*2*ys,1.5*n+2);}},
+    TRIPLE: {initial_points: [[0,0,"h0"],[0,0,"h2"],[0,0,"h4"]],
+	     size: function(n,ys) {return Math.max(n*2*ys,1.5*n+1);}},
+};
+A161206.prototype.do_point = function(p, type) {
+    if (type == TileType.CORNER && 2*p.x + p.y <= 0 && 2*p.y + p.x <= 1) return false;
+    return true;
+};
+A161206.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+	if (-t.min_x() < 100) {
+	    for (var i=0; 2*i - i/2 + 1 >= t.min_x(); i--) {
+		this.draw (t, new Point(2*i,-i,1));
+	    }
+	    for (var i=0; 2*i*this.ys >= t.min_y(); i--) {
+		this.draw (t, new Point(-i, 2*i-1,0));
+	    }
+	} else {
+	    t.draw_horiz_trap (t.min_x(), t.min_x()+1, -2*t.min_x()/3.0*this.ys,
+                               0, 1, 0);
+	    t.draw_rect (-1/2,0,0,t.min_y()/this.ys);
+	    t.draw_rect (-1/2,this.wid/this.ys,1,-this.wid/this.ys);
+	}
+        break;
+    default:
+	break;
+    }
+};
+A161206.prototype.add_grid = function(t) {
+    this.add_tri_grid (t);
+}
+A161206.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+function A161328() {
+    Toothpick.call(this);
+    this.desc = A161328.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}
+A161328.prototype = Object.create(Toothpick.prototype);
+A161328.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A161328.desc = {
+    name: "A161328",
+    label: "A161328 - E-toothpick",
+    size: function(n) {return n*2;},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[-wid,wid],[-wid,1-gapw],[0,1-gap],[wid,1-gapw-wid],[wid,wid],
+			[1-gap-wid,wid],[1-gap,0],[1-gap,-wid],[2*wid,-wid],
+		        [1-gapw,-1+wid+gapw],[1-gap,-1+gap],[1-gapw-wid,-1+gapw],[0,-wid]];
+	    },
+	    neighbors: [[1,-1,5],[1,0,0],[0,1,1]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[-wid,0],[-1+gapw,1-gapw-wid],[-1+gap,1-gap],[-1+gapw+wid,1-gapw],
+			[-wid,2*wid],[-wid,1-gap],[0,1-gap],[wid,1-gap-wid],[wid,wid],
+			[1-gapw-wid,wid],[1-gap,0],[1-gapw,-wid],[wid,-wid]];
+	    },
+	    neighbors: [[1,0,0],[0,1,1],[-1,1,2]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[0,-wid],[-1+gapw+wid,-wid],[-1+gap,0],[-1+gapw,wid],
+			[-2*wid,wid],[-1+gap,1-gap-wid],[-1+gap,1-gap],[-1+gap+wid,1-gap],
+			[-wid,2*wid],[-wid,1-gapw],[0,1-gap],[wid,1-gapw-wid],[wid,0]];
+	    },
+	    neighbors: [[0,1,1],[-1,1,2],[-1,0,3]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[wid,-wid],[wid,-1+gapw],[0,-1+gap],[-wid,-1+wid+gapw],
+			[-wid,-wid],[-1+gap+wid,-wid],[-1+gap,0],[-1+gap,wid],[-2*wid,wid],
+			[-1+gapw,1-gapw-wid],[-1+gap,1-gap],[-1+gapw+wid,1-gapw],[0,wid]];
+	    },
+	    neighbors: [[-1,1,2],[-1,0,3],[0,-1,4]]
+	},
+	4: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[wid,0],[1-gapw,-1+wid+gapw],[1-gap,-1+gap],[1-gapw-wid,-1+gapw],[wid,-2*wid],
+			[wid,-1+gap],[0,-1+gap],[-wid,-1+wid+gap],[-wid,-wid],
+			[-1+gapw+wid,-wid],[-1+gap,0],[-1+gapw,wid],[-wid,wid]];
+	    },
+	    neighbors: [[-1,0,3],[0,-1,4],[1,-1,5]]
+	},
+	5: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,0],[0,wid],[1-gapw-wid,wid],[1-gap,0],[1-gapw,-wid],[2*wid,-wid],
+		        [1-gap,-1+wid+gap],[1-gap,-1+gap],[1-gap-wid,-1+gap],[wid,-2*wid],
+			[wid,-1+gapw],[0,-1+gap],[-wid,-1+wid+gapw],[-wid,0]];
+	    },
+	    neighbors: [[0,-1,4],[1,-1,5],[1,0,0]]
+	}
+    },
+    NORMAL: {total: "A161328", incr: "A161329"},
+    SNOWFLAKE: {total: "A161330", incr: "A161331",
+                initial_points: [[0,0,0],[0,0,3]]}
+};
+A161328.prototype.prune_newlist = function (newlist, type, cover) {
+    // require all ends (neighbors) to not be touched by previous generations
+    // that is, not be covered or in newlist
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+	var keep = true;
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    if (newmap[q.idx()] || cover.isCovered(q)) {
+		keep = false;
+		break;
+	    }
+	}
+	if (keep) ret.push(p);
+    }
+    return ret;
+};
+A161328.prototype.add_grid = function(t) {
+    this.add_tri_grid (t);
+}
+A161328.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+function A151723() {
+    Toothpick.call(this);
+    this.desc = A151723.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}
+A151723.prototype = Object.create(Toothpick.prototype);
+A151723.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A151723.desc = {
+    name: "A151723",
+    label: "A151723 - hexagon",
+    size: function(n,ys) {return Math.max(n*2-1,(n*2-2/3)*ys);},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-1/3+gap/2,2/3-gap],[1/3-gap/2,1/3-gap/2],[2/3-gap,-1/3+gap/2],
+		[1/3-gap/2,-2/3+gap],[-1/3+gap/2,-1/3+gap/2],[-2/3+gap,1/3-gap/2]];
+    },
+    neighbors: [[0,-1,0],[1,-1,0],[-1,1,0],[0,1,0],[-1,0,0],[1,0,0]],
+    NORMAL: {total: "A151723", incr: "A151724"},
+    CORNER: {total: "A256536", incr: "A256537"},
+    VARIANT: {},
+    VARIANT2: {}
+};
+A151723.prototype.do_point = function(p, type) {
+    if (p.x >= 0 && p.x <= -p.y) return true;
+    return false;
+    if (type == TileType.VARIANT && p.y <= 1 && p.x + p.y <= 0 && !(p.x == 0 && p.y == 0)) return false;
+    if (type == TileType.VARIANT2 && (p.y <= 0 || p.x + p.y < 0) && !(p.x == 0 && p.y == 0)) return false;
+    if (type == TileType.VARIANT3 && (p.y < 0 || p.x < 0 || p.x + 2*p.y >= this.special_param)) return false;
+    if (type == TileType.VARIANT4 && (p.y < 0 || (p.x + p.y <= 0 && !(p.x == 0 && p.y == 0)) || p.x + 2*p.y >= this.special_param)) return false;
+    return true;
+};
+A151723.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+	if (-t.min_x() < 100) {
+	    for (var i=0; i >= t.min_x(); --i) {
+		this.draw (t, new Point(i,-1));
+	    }
+	    for (var i=1; i - (i+1)/2.0 + 0.5 <= t.max_x() && -i >= t.min_y(); ++i) {
+		this.draw (t, new Point(i,-i-1));
+	    }
+	    
+	} else {
+	    t.draw_horiz_trap (t.min_x(), -0.5, 0.0,
+			       t.min_x(), -0.5, -1.0*this.ys);
+	    t.draw_horiz_trap (-0.5,0.5,-1*this.ys,
+			       -1.0-t.min_y()/(2*this.ys), -t.min_y()/(2*this.ys),
+			       t.min_y());
+	    t.draw_horiz_trap (0.25,0.25,-0.5*this.ys, -0.5,0.5,-1*this.ys);
+	    t.draw_vert_trap (-0.5,-1*this.ys,-1*this.ys/3,0.0,-2*this.ys/3,-2*this.ys/3);
+	}
+	break;
+    case TileType.VARIANT:
+	if (-t.min_x() < 100) {
+	    for (var i=-1; i+0.5 >= t.min_x(); --i) {
+		this.draw (t, new Point(i,0));
+	    }
+	    for (var i=0; i - (i+1)/2.0 + 0.5 <= t.max_x() && -i >= t.min_y(); ++i) {
+		this.draw (t, new Point(i,-i-1));
+	    }
+	    
+	} else {
+	    t.draw_horiz_trap (t.min_x(), -0.5, this.ys,
+			       t.min_x(), -0.5, 0.0);
+	    t.draw_horiz_trap (-2.0/3.0,1.0/3.0,-2*this.ys/3,
+			       -1.0-t.min_y()/(2*this.ys), -t.min_y()/(2*this.ys),
+			       t.min_y());
+	    t.draw_horiz_trap (1.0/4.0,1.0/4.0,-0.5*this.ys,0.0,1.0/3.0,-2*this.ys/3);
+	    t.draw_horiz_trap (-1.0,-1.0,0.0,-2.0/3.0,0.0,-2*this.ys/3);
+	    t.draw_horiz_trap (-1.0,-0.5,0.0,-0.5,-0.5,-1*this.ys/3);
+	    t.draw_vert_trap (-0.5,this.ys/3,this.ys,-0.25,this.ys/2,this.ys/2);
+	}
+	break;
+    case TileType.VARIANT2:
+	if (-t.min_x() < 100) {
+	    for (var i=-2; i/2.0 >= t.min_x() && -i-2 <= t.max_y(); --i) {
+		this.draw (t, new Point(i,-i-2));
+	    }
+	    for (var i=-1; i <= t.max_x(); ++i) {
+		this.draw (t, new Point(i,-1));
+	    }
+	} else {
+	    t.draw_horiz_trap (0.5,t.max_x(),0.0,0.5, t.max_x(), -1*this.ys);
+	    t.draw_horiz_trap (-2.0-t.max_y()/(2*this.ys),-1.0-t.max_y()/(2*this.ys),
+			       t.max_y(),-1.5,-0.5,-1*this.ys);
+	    t.draw_horiz_trap (-1.0,-0.5,0.0,-0.5,-0.5,-1*this.ys);
+	    t.draw_vert_trap (-0.5,-1*this.ys,-1*this.ys/3,0.0,-1*this.ys,-2*this.ys/3);
+	    t.draw_vert_trap (0.0,-1*this.ys,-2*this.ys/3,0.5,-1*this.ys,-1*this.ys/3);
+	}
+	break;
+    case TileType.VARIANT3:
+	for (var i=0; i <= (this.special_param+1)/2; ++i) {
+	    this.draw (t, new Point(-1, i));
+	}
+	for (var i=0; i <= this.special_param; ++i) {
+	    this.draw (t, new Point(i,-1));
+	}
+	for (var i=0; i <= (this.special_param-1)/2; ++i) {
+	    this.draw (t, new Point(this.special_param-2*i, i));
+	    this.draw (t, new Point(this.special_param-2*i-1, i+1));
+	}
+	break;
+    case TileType.VARIANT4:
+	for (var i=0; i <= this.special_param; ++i) {
+	    this.draw (t, new Point(-i-1,i));
+	}
+	for (var i=0; i <= this.special_param; ++i) {
+	    this.draw (t, new Point(i,-1));
+	}
+	for (var i=0; i <= this.special_param; ++i) {
+	    this.draw (t, new Point(this.special_param-2*i, i));
+	    this.draw (t, new Point(this.special_param-2*i-1, i+1));
+	}
+	break;
+    default:
+	break;
+    }
+};
+A151723.prototype.add_grid = function(t) {
+    this.add_tri_grid (t, 1.0);
+}
+A151723.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+function A161644() {
+    Toothpick.call(this);
+    this.desc = A161644.desc;
+    this.ys = Math.sqrt(3);
+}
+A161644.prototype = Object.create(Toothpick.prototype);
+A161644.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A161644.desc = {
+    name: "A161644",
+    label: "A161644 - triangle",
+    size: function(n,ys) {return Math.max(2*n,(n+1)*ys);},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,1/2-2*gap],[1-gap,-1/2+gap],[-1+gap,-1/2+gap]];
+	    },
+	    neighbors: [[1,0,1],[-1,0,1],[0,-1,1]]
+	},
+	1:{
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,-1/2+2*gap],[-1+gap,1/2-gap],[1-gap,1/2-gap]];
+	    },
+	    neighbors: [[1,0,0],[-1,0,0],[0,1,0]]
+	}
+    },
+    NORMAL: {total: "A161644", incr: "A161645"},
+    CORNER: {total: "A170883", incr: "A170882", priority: 1}
+};
+A161644.prototype.do_point = function(p, type) {
+    if (type == TileType.CORNER && p.y < 0 && p.x + p.y <= 0) return false;
+    return true;
+};
+A161644.prototype.add_corner = function (t, type) {
+    switch (type) {
+    case TileType.CORNER:
+	if (-t.min_x() < 100) {
+	    for (var i=-1; i+1 >= t.min_x(); i -= 2) {
+		this.draw (t, new Point(i,-1,0));
+	    }
+	    for (var i=0; i+1 <= t.max_x() && -i >= t.min_y(); ++i) {
+		this.draw (t, new Point(i, -i-1,1));
+	    }
+	} else {
+	    t.draw_horiz_trap (t.min_x(), 1.0, -0.5*this.ys,t.min_x(), 2.0, -1.5*this.ys);
+	    t.draw_horiz_trap (0.0, 2.0, -1.5*this.ys,
+			       -1.5-t.min_y()/this.ys, 0.5-t.min_y()/this.ys, t.min_y());
+	}
+	break;
+    default:
+	break;
+    }
+};
+A161644.prototype.add_grid = function(t) {
+    this.add_tri_grid (t, 1.0);
+}
+A161644.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+function A194700() {
+    Toothpick.call(this);
+    this.desc = A194700.desc;
+}
+A194700.prototype = Object.create(Toothpick.prototype);
+A194700.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A194700.desc = {
+    name: "A194700",
+    label: "A194700 - D-toothpick",
+    size: function(n) {return n*4-2;},
+    initial_points: [[0,0,3]],
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,-1+gap],[-2*wid,-1+gap+2*wid2],[-2*wid,1-gap-2*wid2],[0,1-gap],[2*wid,1-gap-2*wid2],[2*wid,-1+gap+2*wid2]];
+	    },
+	    neighbors: [[0,1,"x0"],[0,-1,"x4"]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,1-gap],[-1+gap+wid*r2,1-gap],[1-gap,-1+gap+wid*r2],[1-gap,-1+gap],[1-gap-wid*r2,-1+gap],[-1+gap,1-gap-wid*r2]];
+	    },
+	    neighbors: [[-1,1,"x1"],[1,-1,"x5"]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,0],[-1+gap+2*wid2,2*wid],[1-gap-2*wid2,2*wid],[1-gap,0],[1-gapw,-2*wid],[-1+gap+2*wid2,-2*wid]];
+	    },
+	    neighbors: [[-1,0,"x2"],[1,0,"x6"]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,-1+gap],[-1+gap,-1+gap+wid*r2],[1-gap-wid*r2,1-gap],[1-gap,1-gap],[1-gap,1-gap-wid*r2],[-1+gap+wid*r2,-1+gap]];
+	    },
+	    neighbors: [[-1,-1,"x3"],[1,1,"x7"]]
+	},
+	x0: {
+	    neighbors: [[1,1,3],[-1,1,1]]
+	},
+        x1: {
+	    neighbors: [[0,1,0],[-1,0,2]]
+	},
+	x2: {
+	    neighbors: [[-1,1,1],[-1,-1,3]]
+	},
+	x3: {
+	    neighbors: [[-1,0,2],[0,-1,0]]
+	},
+	x4: {
+	    neighbors: [[-1,-1,3],[1,-1,1]]
+	},
+	x5: {
+	    neighbors: [[0,-1,0],[1,0,2]]
+	},
+	x6: {
+	    neighbors: [[1,-1,1],[1,1,3]]
+	},
+	x7: {
+	    neighbors: [[1,0,2],[0,1,0]]
+	},
+	h1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,1-gap],[-1+gap+wid*r2,1-gap],[-gap,gap+wid*r2],[-gap,gap],[-wid*r2-gap,gap],[-1+gap,1-gap-wid*r2]];
+	    },
+	    neighbors: []
+	},
+        h3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,-1+gap],[-1+gap,-1+gap+wid*r2],[-gap-wid*r2,-gap],[-gap,-gap],[-gap,-wid*r2-gap],[-1+gap+wid*r2,-1+gap]];
+	    },
+	    neighbors: []
+	},
+        h5: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[1-gap,-1+gap],[1-gap-wid*r2,-1+gap],[gap,-wid*r2-gap],[gap,-gap],[wid*r2+gap,-gap],[1-gap,-1+gap+wid*r2]];
+	    },
+	    neighbors: []
+	},
+	h7: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[1-gap,1-gap],[1-gap,1-gap-wid*r2],[gap+wid*r2,gap],[gap,gap],[gap,gap+wid*r2],[1-gap-wid*r2,1-gap]];
+	    },
+	    neighbors: []
+	}
+    },
+    NORMAL: {total: "A194700", incr: "A194701"},
+    ISTART: {total: "A220500", incr: "A220501",
+	     initial_points: [[0,0,0]]}
+};
+A194700.prototype.half_orient_map = {x01: "h5", x03: "h3", x21: "h5", x23: "h7", x41: "h1", x43: "h7", x61: "h1", x63: "h3"};
+A194700.prototype.prune_newlist = function (newlist, type, cover) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var r = newmap[q.idx()];
+	    if (r) {
+		r.push({p: q, prev: p});
+	    } else {
+		newmap[q.idx()] = [{p: q, prev: p}];
+	    }
+	}
+    }
+    var ret = [];
+    var hmap = this.half_orient_map;
+    for (var r in newmap) {
+	var l = newmap[r];
+	if (l.length == 1 || (l.length == 2 && l[0].p.orient === l[1].p.orient)) {
+	    var p = l[0].p;
+	    if (cover.isCovered(p)) {
+		var n1 = new Point(p.x, p.y, hmap[l[0].prev.orient + p.orient]);
+//		console.log("blocked, new point " + n1);
+		ret.push(n1);
+	    } else {
+		ret.push(l[0].p);
+	    }
+	} else if (l.length == 2) {
+	    var p1 = l[0];
+	    var p2 = l[1];
+	    if (p1.prev.orient === p2.prev.orient) {
+		var n1 = new Point(p1.p.x, p1.p.y, hmap[p1.prev.orient + p1.p.orient]);
+		var n2 = new Point(p2.p.x, p2.p.y, hmap[p2.prev.orient + p2.p.orient]);
+//		console.log("cross, new points " + n1 + " and " + n2);
+		ret.push(n1);
+		ret.push(n2);
+	    } else {
+		console.log("cross, orientation conflict");
+		console.log("p1.p " + p1.p + " p1.prev " + p1.prev + " p2.p " + p2.p + " p2.prev " + p2.prev);
+	    }
+	} else {
+	    console.log("newmap entry length " + l.length + ": " + l.toString());
+	}
+    }
+    return ret;
+};
+
+function A194270() {
+    Toothpick.call(this);
+    this.desc = A194270.desc;
+}
+A194270.prototype = Object.create(Toothpick.prototype);
+A194270.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A194270.desc = {
+    name: "A194270",
+    label: "A194270 - D-toothpick (second kind)",
+    size: function(n) {return n*4-2;},
+    initial_points: [[0,0,3]],
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,-1+gap],[-2*wid,-1+gap+2*wid2],[-2*wid,1-gap-2*wid2],[0,1-gap],[2*wid,1-gap-2*wid2],[2*wid,-1+gap+2*wid2]];
+	    },
+	    neighbors: [[0,1,"x0"],[0,-1,"x4"]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,1-gap],[-1+gap+wid*r2,1-gap],[1-gap,-1+gap+wid*r2],[1-gap,-1+gap],[1-gap-wid*r2,-1+gap],[-1+gap,1-gap-wid*r2]];
+	    },
+	    neighbors: [[-1,1,"x1"],[1,-1,"x5"]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,0],[-1+gap+2*wid2,2*wid],[1-gap-2*wid2,2*wid],[1-gap,0],[1-gap-2*wid2,-2*wid],[-1+gap+2*wid2,-2*wid]];
+	    },
+	    neighbors: [[-1,0,"x2"],[1,0,"x6"]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = 2*Math.sqrt(2);
+		return [[-1+gap,-1+gap],[-1+gap,-1+gap+wid*r2],[1-gap-wid*r2,1-gap],[1-gap,1-gap],[1-gap,1-gap-wid*r2],[-1+gap+wid*r2,-1+gap]];
+	    },
+	    neighbors: [[-1,-1,"x3"],[1,1,"x7"]]
+	},
+	x0: {
+	    neighbors: [[1,1,3],[-1,1,1]]
+	},
+        x1: {
+	    neighbors: [[0,1,0],[-1,0,2]]
+	},
+	x2: {
+	    neighbors: [[-1,1,1],[-1,-1,3]]
+	},
+	x3: {
+	    neighbors: [[-1,0,2],[0,-1,0]]
+	},
+	x4: {
+	    neighbors: [[-1,-1,3],[1,-1,1]]
+	},
+	x5: {
+	    neighbors: [[0,-1,0],[1,0,2]]
+	},
+	x6: {
+	    neighbors: [[1,-1,1],[1,1,3]]
+	},
+	x7: {
+	    neighbors: [[1,0,2],[0,1,0]]
+	}
+    },
+    NORMAL: {total: "A194270", incr: "A194271"},
+    ISTART: {total: "A212008", incr: "A212009",
+	     initial_points: [[0,0,0]]}
+};
+A194270.prototype.prune_newlist = function (newlist, type, cover) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var r = newmap[q.idx()];
+	    if (r) {
+		r.push({p: q, prev: p});
+	    } else {
+		newmap[q.idx()] = [{p: q, prev: p}];
+	    }
+	}
+    }
+    var ret = [];
+    for (var r in newmap) {
+	var l = newmap[r];
+	if (l.length == 1 || (l.length == 2 && l[0].p.orient === l[1].p.orient)) {
+	    var p = l[0].p;
+	    if (!cover.isCovered(p)) {
+		ret.push(l[0].p);
+	    }
+	}
+    }
+    return ret;
+};
+
+function A160172() {
+    Toothpick.call(this);
+    this.desc = A160172.desc;
+};
+A160172.prototype = Object.create(Toothpick.prototype);
+A160172.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A160172.desc = {
+    name: "A160172",
+    label: "A160172 - T-toothpick",
+    size: function(n) {return 2*n;},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gapw,wid],[1-gapw,wid],[1-gapw,-wid],[wid,-wid],[wid,-1+gapw],[-wid,-1+gapw],[-wid,-wid],[-1+gapw,-wid]];
+	    },
+	    neighbors: [[-1,0,3],[1,0,1],[0,-1,0]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-wid,-1+gapw],[-wid,1-gapw],[wid,1-gapw],[wid,wid],[1-gapw,wid],[1-gapw,-wid],[wid,-wid],[wid,-1+gapw]];
+	    },
+	    neighbors: [[0,-1,0],[0,1,2],[1,0,1]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[1-gapw,-wid],[-1+gapw,-wid],[-1+gapw,wid],[-wid,wid],[-wid,1-gapw],[wid,1-gapw],[wid,wid],[1-gapw,wid]];
+	    },
+	    neighbors: [[1,0,1],[-1,0,3],[0,1,2]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[wid,1-gapw],[wid,-1+gapw],[-wid,-1+gapw],[-wid,-wid],[-1+gapw,-wid],[-1+gapw,wid],[-wid,wid],[-wid,1-gapw]];
+	    },
+	    neighbors: [[0,1,2],[0,-1,0],[-1,0,3]]
+	}
+    },
+    NORMAL: {total: "A160172",incr: "A160173"}
+};
+
+function A182840() {
+    Toothpick.call(this);
+    this.desc = A182840.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}
+A182840.prototype = Object.create(Toothpick.prototype);
+A182840.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A182840.desc = {
+    name: "A182840",
+    label: "A182840 - toothpick on hexagon",
+    size: function(n,ys) {return Math.max(3*n-1,4*(n-1)*ys);},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,0],[-1+gap,2*wid],[1-gap-2*wid,2*wid],[1-gap,0],[1-gap,-2*wid],[-1+gap+2*wid,-2*wid]];
+	    },
+	    neighbors: [[-1,0,"x0"],[1,0,"x3"]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[0,-1+gap],[-2*wid,-1+gap+2*wid],[-2*wid,1-gap],[0,1-gap],[2*wid,1-gap-2*wid],[2*wid,-1+gap]];
+	    },
+	    neighbors: [[0,-1,"x1"],[0,1,"x4"]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,1-gap],[-1+gap+2*wid,1-gap],[1-gap,-1+gap+2*wid],[1-gap,-1+gap],[1-gap-2*wid,-1+gap],[-1+gap,1-gap-2*wid]];
+	    },
+	    neighbors: [[1,-1,"x2"],[-1,1,"x5"]]
+	},
+	x0: {
+	    neighbors: [[-1,1,2],[0,-1,1]]
+	},
+	x1: {
+	    neighbors: [[-1,0,0],[1,-1,2]]
+	},
+	x2: {
+	    neighbors: [[0,-1,1],[1,0,0]]
+	},
+	x3: {
+	    neighbors: [[1,-1,2],[0,1,1]]
+	},
+	x4: {
+	    neighbors: [[1,0,0],[-1,1,2]]
+	},
+	x5: {
+	    neighbors: [[0,1,1],[-1,0,0]]
+	}
+    },
+    NORMAL: {total: "A182840", incr: "A182841"},
+    TRIPLE: {total: "A182632", incr: "A182633",
+             initial_points: [[1,0,0],[-1,1,2],[0,-1,1]],
+	     size: function(n,ys) {return Math.max(3*n+1,n*4*ys);}
+    }
+};
+A182840.prototype.prune_newlist = function (newlist, type, cover) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var r = newmap[q.idx()];
+	    if (r) {
+		r.push({p: q, prev: p});
+	    } else {
+		newmap[q.idx()] = [{p: q, prev: p}];
+	    }
+	}
+    }
+    var ret = [];
+    for (var r in newmap) {
+	var l = newmap[r];
+	if (l.length == 1 || (l.length == 2 && l[0].p.orient === l[1].p.orient)) {
+	    var p = l[0].p;
+	    if (!cover.isCovered(p)) {
+		ret.push(l[0].p);
+	    }
+	}
+    }
+    return ret;
+};
+A182840.prototype.add_grid = function(t) {
+    this.add_tri_grid (t);
+}
+A182840.prototype.add_axis = function(t) {
+    this.add_tri_axis (t);
+}
+
+function A187210() {
+    Toothpick.call(this);
+    this.desc = A187210.desc;
+}
+A187210.prototype = Object.create(Toothpick.prototype);
+A187210.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A187210.desc = {
+    name: "A187210",
+    label: "A187210 - quarter-circle toothpick",
+    size: function(n) {return n*4-1;},
+    orientations: {
+	0: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[1+2*wid,-1],[1+2*wid,1+2*wid],[-1,1+2*wid],[-1,1-2*wid],[1-2*wid,1-2*wid],[1-2*wid,-1]],
+			[[-1-2*wid+gap+2*wid2,-1-2*wid+gap+2*wid2],[-1-2*wid+gap+2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,-1-2*wid+gap+2*wid2]]];
+	    },
+	    neighbors: [[-1,1,"x2"],[1,-1,"x3"]]
+	},
+	1: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[1,1+2*wid],[-1-2*wid,1+2*wid],[-1-2*wid,-1],[-1+2*wid,-1],[-1+2*wid,1-2*wid],[1,1-2*wid]],
+			[[-1-2*wid+gap+2*wid2,-1-2*wid+gap+2*wid2],[-1-2*wid+gap+2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,-1-2*wid+gap+2*wid2]]];
+	    },
+	    neighbors: [[-1,-1,"x3"],[1,1,"x0"]]
+	},
+	2: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[-1-2*wid,1],[-1-2*wid,-1-2*wid],[1,-1-2*wid],[1,-1+2*wid],[-1+2*wid,-1+2*wid],[-1+2*wid,1]],
+			[[-1-2*wid+gap+2*wid2,-1-2*wid+gap+2*wid2],[-1-2*wid+gap+2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,-1-2*wid+gap+2*wid2]]];
+	    },
+	    neighbors: [[1,-1,"x0"],[-1,1,"x1"]]
+	},
+	3: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[-1,-1-2*wid],[1+2*wid,-1-2*wid],[1+2*wid,1],[1-2*wid,1],[1-2*wid,-1+2*wid],[-1,-1+2*wid]],
+			[[-1-2*wid+gap+2*wid2,-1-2*wid+gap+2*wid2],[-1-2*wid+gap+2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,1+2*wid-gap-2*wid2],[1+2*wid-gap-2*wid2,-1-2*wid+gap+2*wid2]]];
+	    },
+	    neighbors: [[1,1,"x1"],[-1,-1,"x2"]]
+	},
+	x0: {
+	    neighbors: [[1,-1,0],[1,1,3]]
+	},
+        x1: {
+	    neighbors: [[1,1,1],[-1,1,0]]
+	},
+	x2: {
+	    neighbors: [[-1,1,2],[-1,-1,1]]
+	},
+	x3: {
+	    neighbors: [[-1,-1,3],[1,-1,2]]
+	}
+    },
+    NORMAL: {total: "A187210", incr: "A187211"}
+};
+A187210.prototype.prune_newlist = function (newlist, type, cover) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var r = newmap[q.idx()];
+	    if (r) {
+		r.push({p: q, prev: p});
+	    } else {
+		newmap[q.idx()] = [{p: q, prev: p}];
+	    }
+	}
+    }
+    var ret = [];
+    for (var r in newmap) {
+	var l = newmap[r];
+	if (l.length == 1 || (l.length == 2 && l[0].p.orient === l[1].p.orient)) {
+	    var p = l[0].p;
+	    if (!cover.isCovered(p)) {
+		ret.push(l[0].p);
+	    }
+	}
+    }
+    return ret;
+};
+
+function A187220() {
+    Toothpick.call(this);
+    this.desc = A187220.desc;
+}
+A187220.prototype = Object.create(Toothpick.prototype);
+A187220.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A187220.desc = {
+    name: "A187220",
+    label: "A187220 - Gull-wing toothpick",
+    size: function(n) {return n*2+1;},
+    orientations: {
+	0: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[-1,1+wid],[wid,1+wid],[wid,0],[-wid,0],[-wid,1-wid],[-1,1-wid],
+			 [-wid,0],[-wid,1+wid],[1,1+wid],[1,1-wid],[wid,1-wid],[wid,0]],
+			[[-1+gap,gap],[-1+gap,1+wid-gapw],[1-gap,1+wid-gapw],[1-gap,gap]]];
+	    },
+	    neighbors: [[-1,1,3],[1,1,1]]
+	},
+	1: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[1+wid,1],[1+wid,-wid],[0,-wid],[0,wid],[1-wid,wid],[1-wid,1],
+			 [0,wid],[1+wid,wid],[1+wid,-1],[1-wid,-1],[1-wid,-wid],[0,-wid]],
+			[[gap,1-gap],[1+wid-gapw,1-gap],[1+wid-gapw,-1+gap],[gap,-1+gap]]];
+	    },
+	    neighbors: [[1,1,0],[1,-1,2]]
+	},
+	2: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[1,-1-wid],[-wid,-1-wid],[-wid,0],[wid,0],[wid,-1+wid],[1,-1+wid],
+			 [wid,0],[wid,-1-wid],[-1,-1-wid],[-1,-1+wid],[-wid,-1+wid],[-wid,0]],
+			[[1-gap,gap],[1-gap,-1-wid+gapw],[-1+gap,-1-wid+gapw],[-1+gap,gap]]];
+	    },
+	    neighbors: [[1,-1,1],[-1,-1,3]]
+	},
+	3: {
+	    quarter_circle: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[[-1-wid,-1],[-1-wid,wid],[0,wid],[0,-wid],[-1+wid,-wid],[-1+wid,-1],
+			 [0,-wid],[-1-wid,-wid],[-1-wid,1],[-1+wid,1],[-1+wid,wid],[0,wid]],
+			[[gap,-1+gap],[-1-wid+gapw,-1+gap],[-1-wid+gapw,1-gap],[gap,1-gap]]];
+	    },
+	    neighbors: [[-1,-1,2],[-1,1,0]]
+	}
+    },
+    NORMAL: {total: "A187220", incr: "A187221"}
+};
+
+function A172310() {
+    Toothpick.call(this);
+    this.desc = A172310.desc;
+};
+A172310.prototype = Object.create(Toothpick.prototype);
+A172310.prototype.constructor = function() {
+    Toothpick.call(this);
+};
+A172310.desc = {
+    name: "A172310",
+    label: "A172310 - L-toothpick",
+    initial_points: [[0,0,7]],
+    size: function(n) {return 2*n;},
+    orientations: {
+	0: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-wid,1-gap],[wid,1-gap],[wid,wid],[1-gap,wid],[1-gap,-wid],[-wid+gapw,-wid],[-wid+gapw,-wid+gapw],[-wid,-wid+gapw]];
+	    },
+	    neighbors: [[0,1,7],[1,0,4]],
+            conflicts: [[1,0,2],[1,0,3],[0,1,1],[0,1,2]]
+	},
+	1: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[1-gap,wid],[1-gap,-wid],[wid,-wid],[wid,-1+gap],[-wid,-1+gap],[-wid,wid-gapw],[-wid+gapw,wid-gapw],[-wid+gapw,wid]];
+	    },
+	    neighbors: [[1,0,4],[0,-1,5]],
+            conflicts: [[0,-1,3],[0,-1,0],[1,0,2],[1,0,3]]
+	},
+	2: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[wid,-1+gap],[-wid,-1+gap],[-wid,-wid],[-1+gap,-wid],[-1+gap,wid],[wid-gapw,wid],[wid-gapw,wid-gapw],[wid,wid-gapw]];
+	    },
+	    neighbors: [[0,-1,5],[-1,0,6]],
+            conflicts: [[-1,0,0],[-1,0,1],[0,-1,3],[0,-1,0]]
+	},
+	3: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+		return [[-1+gap,-wid],[-1+gap,wid],[-wid,wid],[-wid,1-gap],[wid,1-gap],[wid,-wid+gapw],[wid-gapw,-wid+gapw],[wid-gapw,-wid]];
+	    },
+	    neighbors: [[-1,0,6],[0,1,7]],
+            conflicts: [[0,1,1],[0,1,2],[-1,0,0],[-1,0,1]]
+	},
+        4: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = Math.sqrt(2);
+		return [[(wid2-wid)*r2+gap,wid2*r2+gap],
+                        [1-(wid+wid2)*r2/2-gap,1+(wid-wid2)*r2/2-gap],
+                        [1-gap,1-gap],
+                        [1+(wid-wid2)*r2/2-gap,1-(wid+wid2)*r2/2-gap],
+                        [wid*r2,0],
+                        [1+(wid-wid2)*r2/2-gap,-1+(wid+wid2)*r2/2+gap],
+                        [1-gap,-1+gap],
+                        [1-(wid+wid2)*r2/2-gap,-1-(wid-wid2)*r2/2+gap],
+                        [(wid2-wid)*r2+gap,-wid2*r2-gap]];
+	    },
+	    neighbors: [[1,1,0],[1,-1,1]],
+            conflicts: [[0,1,4],[0,1,5],[1,0,5],[1,0,6],[1,0,7],[0,-1,7],[0,-1,4],[1,1,5],[1,1,6],[1,-1,6],[1,-1,7]]
+        },
+        5: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = Math.sqrt(2);
+		return [[wid2*r2+gap,-(wid2-wid)*r2-gap],
+                        [1+(wid-wid2)*r2/2-gap,-1+(wid+wid2)*r2/2+gap],
+                        [1-gap,-1+gap],
+                        [1-(wid+wid2)*r2/2-gap,-1-(wid-wid2)*r2/2+gap],
+                        [0,-wid*r2],
+                        [-1+(wid+wid2)*r2/2+gap,-1-(wid-wid2)*r2/2+gap],
+                        [-1+gap,-1+gap],
+                        [-1-(wid-wid2)*r2/2+gap,-1+(wid+wid2)*r2/2+gap],
+                        [-wid2*r2-gap,-(wid2-wid)*r2-gap]];
+	    },
+	    neighbors: [[1,-1,1],[-1,-1,2]],
+            conflicts: [[1,0,5],[1,0,6],[0,-1,6],[0,-1,7],[0,-1,4],[-1,0,4],[-1,0,5],[1,-1,6],[1,-1,7],[-1,-1,7],[-1,-1,4]]
+        },
+        6: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = Math.sqrt(2);
+		return [[-(wid2-wid)*r2-gap,-wid2*r2-gap],
+                        [-1+(wid+wid2)*r2/2+gap,-1-(wid-wid2)*r2/2+gap],
+                        [-1+gap,-1+gap],
+                        [-1-(wid-wid2)*r2/2+gap,-1+(wid+wid2)*r2/2+gap],
+                        [-wid*r2,0],
+                        [-1-(wid-wid2)*r2/2+gap,1-(wid+wid2)*r2/2-gap],
+                        [-1+gap,1-gap],
+                        [-1+(wid+wid2)*r2/2+gap,1+(wid-wid2)*r2/2-gap],
+                        [-(wid2-wid)*r2-gap,wid2*r2+gap]];
+	    },
+	    neighbors: [[-1,-1,2],[-1,1,3]],
+            conflicts: [[0,-1,6],[0,-1,7],[-1,0,7],[-1,0,4],[-1,0,5],[0,1,5],[0,1,6],[-1,-1,7],[-1,-1,4],[-1,1,4],[-1,1,5]]
+        },
+        7: {
+	    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+                var r2 = Math.sqrt(2);
+		return [[-wid2*r2-gap,(wid2-wid)*r2+gap],
+                        [-1-(wid-wid2)*r2/2+gap,1-(wid+wid2)*r2/2-gap],
+                        [-1+gap,1-gap],
+                        [-1+(wid+wid2)*r2/2+gap,1+(wid-wid2)*r2/2-gap],
+                        [0,wid*r2],
+                        [1-(wid+wid2)*r2/2-gap,1+(wid-wid2)*r2/2-gap],
+                        [1-gap,1-gap],
+                        [1+(wid-wid2)*r2/2-gap,1-(wid+wid2)*r2/2-gap],
+                        [wid2*r2+gap,(wid2-wid)*r2+gap]];
+	    },
+	    neighbors: [[-1,1,3],[1,1,0]],
+            conflicts: [[-1,0,7],[-1,0,4],[0,1,4],[0,1,5],[0,1,6],[1,0,6],[1,0,7],[-1,1,4],[-1,1,5],[1,1,5],[1,1,6]]
+
+        }
+    },
+    NORMAL: {total: "A172310",incr: "A172311"},
+    DOUBLE: {total: "A172304", incr: "A172305",
+             initial_points: [[0,0,5],[0,0,7]]},
+    LSTART: {
+        initial_points: [[0,0,0]]},
+    DOUBLEL: {
+        initial_points: [[0,0,0],[0,0,2]]}
+};
+A172310.prototype.prune_newlist = function (newlist, type, cover) {
+    // eliminate crossings of diagonals, with covered or newlist
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var keep = true;
+//	var nlist = this.get_neighbors(p, type);
+//	for (var j=0; j < nlist.length; j++) {
+//	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+//            if (cover.isCovered(q)) {
+//	        keep = false;
+//		break;
+//	    }
+//        }
+	var clist = this.get_conflicts(p, type);
+        if (keep && clist) {
+	    for (var j=0; j < clist.length; j++) {
+	        var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+                var r = newmap[q.idx()];
+                if (r && r.orient === q.orient) {
+		    keep = false;
+		    break;
+	        }
+                r = cover.isCovered(q);
+                if (r && r.orient === q.orient) {
+		    keep = false;
+		    break;
+	        }
+	    }
+	}
+	if (keep) ret.push(p);
+    }
+    return ret;
+};
+
+// add new Toothpick sequences here...
+
+function A169707() {
+    Automata.call(this);
+    this.desc = A169707.desc;
+};
+A169707.prototype = Object.create(Automata.prototype);
+A169707.prototype.constructor = function() {
+    Automata.call(this);
+};
+A169707.desc = {
+    name: "A169707",
+    label: "A169707 - CA using rule 750",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0]],
+    compare_delta_incr: 1,
+    NORMAL: {total: "A169707", incr: "A169708", priority: 1},
+    DIAGONAL: {total: "A169707", incr: "A169708", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,-1,0],[1,1,0]]}
+};
+A169707.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var v = this.neighbor_vals(p, type, onlist);
+    var c = 0;
+    for (var i=0; i<v.length; i++) c += v[i];
+    if (c == 1 || c == 3) return 1;
+    else return 0;
+};
+
+function A169709() {
+    Automata.call(this);
+    this.desc = A169709.desc;
+};
+A169709.prototype = Object.create(Automata.prototype);
+A169709.prototype.constructor = function() {
+    Automata.call(this);
+};
+A169709.desc = {
+    name: "A169709",
+    label: "A169709 - CA using rule 1006",
+    size: function(n) {return n*2-1;},
+    compare_delta_total: 1,
+    compare_delta_incr: 2,
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0]],
+    NORMAL: {total: "A169709", incr: "A169710", priority: 1},
+    DIAGONAL: {total: "A169709", incr: "A169710", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,-1,0],[1,1,0]]}
+};
+A169709.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var v = this.neighbor_vals(p, type, onlist);
+    var c = 0;
+    for (var i=0; i<v.length; i++) c += v[i];
+    if (c == 1 || c == 3 || c == 4) return 1;
+    else return 0;
+};
+
+function A169649() {
+    Automata.call(this);
+    this.desc = A169649.desc;
+};
+A169649.prototype = Object.create(Automata.prototype);
+A169649.prototype.constructor = function() {
+    Automata.call(this);
+};
+A169649.desc = {
+    name: "A169649",
+    label: "A169649 - CA using rule 942",
+    size: function(n) {return n*2-1;},
+    compare_delta: 1,
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0]],
+    NORMAL: {total: "A169649", incr: "A169648", priority: 1},
+    DIAGONAL: {total: "A169649", incr: "A169648", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,-1,0],[1,1,0]]}
+
+};
+A169649.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var v = this.neighbor_vals(p, type, onlist);
+    var c = 0;
+    for (var i=0; i<v.length; i++) c += v[i];
+    if (c == 1 || c == 4) return 1;
+    else return 0;
+};
+
+function A170896() {
+    Automata.call(this);
+    this.desc = A170896.desc;
+};
+A170896.prototype = Object.create(Automata.prototype);
+A170896.prototype.constructor = function() {
+    Automata.call(this);
+};
+A170896.desc = {
+    name: "A170896",
+    label: "A170896 - Schrandt-Ulam CA",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[0,1,0],[1,0,0],[0,-1,0]],
+    conflicts: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+    NORMAL: {total: "A170896", incr: "A170897", priority: 1},
+    DIAGONAL: {total: "A170896", incr: "A170897", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+	       conflicts: [[-2,0,0],[0,2,0],[2,0,0],[0,-2,0]]}
+};
+A170896.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var nlist = this.get_neighbors(p, type);
+
+    // share exactly one edge with an ON cell of generation n-1
+    var parent = null;
+    for (var j=0; j < nlist.length; j++) {
+	var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	var qi = q.idx();
+	if (qi in onlist) {
+	    var qq = onlist[qi];
+	    if (qq.orient == n-1) {
+                if (parent !== null) {
+		    return 0;
+		}
+                parent = qq;
+            } else {
+		return 0;
+	    }
+        }
+    }
+    // sanity check, shouldn't happen
+    if (parent === null) return 0;
+
+    // conflicts are those cells that share a vertex (only) with p
+    var clist = this.get_conflicts(p, type);
+    // do not share an outer vertex with an ON cell of generation n-3 or earlier
+    for (var j=0; j < clist.length; j++) {
+	var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+	// only check "outer" vertices
+	if (this.is_neighbor (parent, type, q)) continue;
+	if (q.idx() in onlist) return 0;
+    }
+    return 1;
+};
+A170896.prototype.prune_newlist = function(n, newlist, type, onlist, offlist) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+
+	// find parent
+	var parent = null;
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var qi = q.idx();
+	    if (qi in onlist) {
+		var qq = onlist[qi];
+		if (qq.orient == n-1) {
+                    parent = qq;
+		    break;
+		}
+	    }
+        }
+	// sanity check, shouldn't happen
+	if (parent === null) {
+	    console.log("A170896 prune_newlist, " + p + " has no parent");
+	    continue;
+	}
+
+	// conflicts are those cells that share a vertex (only) with p
+	// if two candidates share an outer vertex, neither is turned on
+	var clist = this.get_conflicts(p, type);
+	var conflict = false;
+	for (var j=0; j < clist.length; j++) {
+	    var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+	    // only check "outer" vertices
+	    if (this.is_neighbor (parent, type, q)) continue;
+            var qi = q.idx();
+	    if (qi in newmap || qi in onlist) {
+		conflict = true;
+		break;
+	    }
+	}
+	if (!conflict) {
+	    ret.push(p);
+	}
+    }
+    return ret;
+};
+
+
+function A151895() {
+    Automata.call(this);
+    this.desc = A151895.desc;
+};
+A151895.prototype = Object.create(Automata.prototype);
+A151895.prototype.constructor = function() {
+    Automata.call(this);
+};
+A151895.desc = {
+    name: "A151895",
+    label: "A151895 - Schrandt-Ulam CA variant",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[0,1,0],[1,0,0],[0,-1,0]],
+    conflicts: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+    NORMAL: {total: "A151895", incr: "A151896", priority: 1},
+    DIAGONAL: {total: "A151895", incr: "A151896", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+	       conflicts: [[-2,0,0],[0,2,0],[2,0,0],[0,-2,0]]}
+};
+A151895.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var nlist = this.get_neighbors(p, type);
+
+    // share exactly one edge with an ON cell of generation n-1
+    var parent = null;
+    for (var j=0; j < nlist.length; j++) {
+	var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	var qi = q.idx();
+	if (qi in onlist) {
+	    var qq = onlist[qi];
+	    if (qq.orient == n-1) {
+                if (parent !== null) {
+		    return 0;
+		}
+                parent = qq;
+            } else {
+		return 0;
+	    }
+        }
+    }
+    // sanity check, shouldn't happen
+    if (parent === null) return 0;
+    
+    return 1;
+};
+A151895.prototype.prune_newlist = function(n, newlist, type, onlist, offlist) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+
+	// find parent
+	var parent = null;
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var qi = q.idx();
+	    if (qi in onlist) {
+		var qq = onlist[qi];
+		if (qq.orient == n-1) {
+                    parent = qq;
+		    break;
+		}
+	    }
+        }
+	// sanity check, shouldn't happen
+	if (parent === null) {
+	    console.log("A151895 prune_newlist, " + p + " has no parent");
+	    continue;
+	}
+
+	// conflicts are those cells that share a vertex (only) with p
+	// if two candidates share an outer vertex, neither is turned on
+	var clist = this.get_conflicts(p, type);
+	var conflict = false;
+	for (var j=0; j < clist.length; j++) {
+	    var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+	    // only check "outer" vertices
+	    if (this.is_neighbor (parent, type, q)) continue;
+            var qi = q.idx();
+	    if (qi in newmap || qi in onlist || qi in offlist) {
+		conflict = true;
+		break;
+	    }
+	}
+	if (!conflict) {
+	    ret.push(p);
+	} else {
+            offlist[p.idx()] = p;
+	}
+    }
+    return ret;
+};
+
+function A267190() {
+    Automata.call(this);
+    this.desc = A267190.desc;
+};
+A267190.prototype = Object.create(Automata.prototype);
+A267190.prototype.constructor = function() {
+    Automata.call(this);
+};
+A267190.desc = {
+    name: "A267190",
+    label: "A267190 - A151895 variant",
+    size: function(n) {return n*2-1;},
+    polygon: function(gap,wid,wid2,gapw,ys,yoffset) {
+	return [[-0.5+gap,0.5-gap],[0.5-gap,0.5-gap],[0.5-gap,-0.5+gap],[-0.5+gap,-0.5+gap]];
+    },
+    neighbors: [[-1,0,0],[0,1,0],[1,0,0],[0,-1,0]],
+    conflicts: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+    NORMAL: {total: "A267190", incr: "A267191", priority: 1},
+    DIAGONAL: {total: "A267190", incr: "A267191", priority: 0,
+	       neighbors: [[-1,-1,0],[-1,1,0],[1,1,0],[1,-1,0]],
+	       conflicts: [[-2,0,0],[0,2,0],[2,0,0],[0,-2,0]]}
+};
+A267190.prototype.state = function(p, n, type, onlist, candlist, offlist) {
+    var nlist = this.get_neighbors(p, type);
+
+    // share exactly one edge with an ON cell of generation n-1
+    var parent = null;
+    for (var j=0; j < nlist.length; j++) {
+	var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	var qi = q.idx();
+	if (qi in onlist) {
+	    var qq = onlist[qi];
+	    if (qq.orient == n-1) {
+                if (parent !== null) {
+		    return 0;
+		}
+                parent = qq;
+            } else {
+		return 0;
+	    }
+        }
+    }
+    // sanity check, shouldn't happen
+    if (parent === null) return 0;
+    return 1;
+};
+A267190.prototype.prune_newlist = function(n, newlist, type, onlist, offlist) {
+    var newmap = {};
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	newmap[p.idx()] = p;
+    }
+
+    var ret = [];
+    for (var i=0; i<newlist.length; i++) {
+	var p = newlist[i];
+	var nlist = this.get_neighbors(p, type);
+
+	// find parent
+	var parent = null;
+	for (var j=0; j < nlist.length; j++) {
+	    var q = p.add3(nlist[j][0], nlist[j][1], nlist[j][2]);
+	    var qi = q.idx();
+	    if (qi in onlist) {
+		var qq = onlist[qi];
+		if (qq.orient == n-1) {
+                    parent = qq;
+		    break;
+		}
+	    }
+        }
+	// sanity check, shouldn't happen
+	if (parent === null) {
+	    console.log("A267190 prune_newlist, " + p + " has no parent");
+	    continue;
+	}
+
+	// conflicts are those cells that share a vertex (only) with p
+	// if two candidates share an outer vertex, neither is turned on
+	var clist = this.get_conflicts(p, type);
+	var conflict = false;
+	for (var j=0; j < clist.length; j++) {
+	    var q = p.add3(clist[j][0], clist[j][1], clist[j][2]);
+	    // only check "outer" vertices
+	    if (this.is_neighbor (parent, type, q)) continue;
+            var qi = q.idx();
+	    if (qi in newmap || qi in onlist) {
+		conflict = true;
+		break;
+	    }
+	}
+	if (!conflict) {
+	    ret.push(p);
+        }
+    }
+    return ret;
+};
+
+// add new Automata sequences here...
+
+function CanvasTile(b) {
+    var canvas = document.getElementById("canvas-picture");
+    if (!canvas.getContext) {
+        return;
+    }
+    this.b = b;
+    this.ctx = canvas.getContext("2d");
+    this.ctx.fillStyle = "rgb(0,0,0)";
+    this.width = canvas.width;
+    this.height = canvas.height;
+    this.dim = Math.min(this.width,this.height);
+    this.color_new = false;
+    this.ctx.clearRect(0,0,canvas.width,canvas.height);
+    this.scale = 0;
+    this.cnt_total = 0;
+    this.cnt_new = 0;
+}
+CanvasTile.prototype = {
+    min_x: function() {return -this.width/(2*this.scale);},
+    max_x: function() {return this.width/(2*this.scale);},
+    min_y: function() {return -this.height/(2*this.scale);},
+    max_y: function() {return this.height/(2*this.scale);},
+    set_scale: function(scale, sz, type) {
+	this.scale = scale;
+	if (sz) {
+	    var s = this.b.size(sz,type);
+	    while (s * this.scale > this.dim) this.scale /= 2;
+	    while (s * this.scale * 2 <= this.dim) this.scale *= 2;
+	}
+    },
+    set_nscale: function(nscale, type) {
+	this.scale = this.dim / this.b.size(nscale, type);
+    },
+    draw_tile: function(n, type) {
+	this.cnt_total = 0;
+	this.cnt_new = 0;
+	var cnt_incr = 0;
+
+	this.b.iterate(n,type,this,
+		       function(ctx,p,is_new){
+			   this.draw (ctx, p, is_new);
+			   cnt_incr++;
+		       },
+		       function(ctx,i){
+			   ctx.cnt_new = cnt_incr;
+			   ctx.cnt_total += cnt_incr;
+			   cnt_incr = 0;
+		       });
+    },
+    draw_rect: function(x1,y1,x2,y2) {
+	this.ctx.fillRect (this.width/2 + x1*this.scale,
+			   this.height/2 - y2*this.scale,
+			   (x2-x1)*this.scale, (y2-y1)*this.scale);
+    },
+    draw_poly: function(p,is_new) {
+        this.ctx.save();
+        if (this.color_new && is_new) {
+	    this.ctx.fillStyle = "rgb(0,0,255)";
+        }
+	var l = p.length;
+	this.ctx.beginPath();
+	this.ctx.moveTo (this.width/2 + p[0][0] * this.scale,
+			 this.height/2 - p[0][1] * this.scale);
+	for (var i=1; i<l; i++) {
+	    this.ctx.lineTo (this.width/2 + p[i][0] * this.scale,
+			     this.height/2 - p[i][1] * this.scale);
+	}
+	this.ctx.closePath();
+	this.ctx.fill();
+        this.ctx.restore();
+    },
+    draw_qc: function(qc,clip,is_new) {
+	this.ctx.save();
+        if (this.color_new && is_new) {
+	    this.ctx.fillStyle = "rgb(0,0,255)";
+        }
+	if (clip && clip.length) {
+	    this.ctx.beginPath();
+	    this.ctx.moveTo (this.width/2 + clip[0][0] * this.scale,
+			     this.height/2 - clip[0][1] * this.scale);
+	    for (var i=1; i<clip.length; i++) {
+		this.ctx.lineTo (this.width/2 + clip[i][0] * this.scale,
+				 this.height/2 - clip[i][1] * this.scale);
+	    }
+	    this.ctx.closePath();
+	    this.ctx.clip();
+	}
+	this.ctx.beginPath();
+	var k = 4/3*(Math.sqrt(2)-1);
+	for (var i=0; i<qc.length; i += 6) {
+	    this.ctx.moveTo(this.width/2 + qc[i+0][0] * this.scale,
+			    this.height/2 - qc[i+0][1] * this.scale);
+	    this.ctx.bezierCurveTo(this.width/2 + (qc[i+0][0]*(1-k) + qc[i+1][0]*k)*this.scale,
+				   this.height/2 - (qc[i+0][1]*(1-k) + qc[i+1][1]*k)*this.scale,
+				   this.width/2 + (qc[i+2][0]*(1-k) + qc[i+1][0]*k)*this.scale,
+				   this.height/2 - (qc[i+2][1]*(1-k) + qc[i+1][1]*k)*this.scale,
+				   this.width/2 + qc[i+2][0]*this.scale,
+				   this.height/2 - qc[i+2][1]*this.scale);
+	    this.ctx.lineTo(this.width/2 + qc[i+3][0] * this.scale,
+			    this.height/2 - qc[i+3][1] * this.scale);
+	    this.ctx.bezierCurveTo(this.width/2 + (qc[i+3][0]*(1-k) + qc[i+4][0]*k)*this.scale,
+				   this.height/2 - (qc[i+3][1]*(1-k) + qc[i+4][1]*k)*this.scale,
+				   this.width/2 + (qc[i+5][0]*(1-k) + qc[i+4][0]*k)*this.scale,
+				   this.height/2 - (qc[i+5][1]*(1-k) + qc[i+4][1]*k)*this.scale,
+				   this.width/2 + qc[i+5][0]*this.scale,
+				   this.height/2 - qc[i+5][1]*this.scale);
+	    this.ctx.closePath();
+	    this.ctx.fill();
+	}
+	this.ctx.restore();
+    },
+    // cw around trapezoid: (x1,y1a),(x1,y1b),(x2,y2b),(x2,y2a)
+    draw_vert_trap: function(x1,y1a,y1b,x2,y2a,y2b) {
+	this.ctx.beginPath();
+	this.ctx.moveTo(this.width/2 + x1*this.scale,
+			this.height/2 - y1a*this.scale);
+	this.ctx.lineTo(this.width/2 + x1*this.scale,
+			this.height/2 - y1b*this.scale);
+	this.ctx.lineTo(this.width/2 + x2*this.scale,
+			this.height/2 - y2b*this.scale);
+	this.ctx.lineTo(this.width/2 + x2*this.scale,
+			this.height/2 - y2a*this.scale);
+	this.ctx.closePath();
+	this.ctx.fill();
+    },
+    // cw around trapezoid: (x1a,y1),(x1b,y1),(x2b,y2),(x2a,y2)
+    draw_horiz_trap: function(x1a, x1b, y1, x2a, x2b, y2) {
+	this.ctx.beginPath();
+	this.ctx.moveTo(this.width/2 + x1a*this.scale,
+			this.height/2 - y1*this.scale);
+	this.ctx.lineTo(this.width/2 + x1b*this.scale,
+			this.height/2 - y1*this.scale);
+	this.ctx.lineTo(this.width/2 + x2b*this.scale,
+			this.height/2 - y2*this.scale);
+	this.ctx.lineTo(this.width/2 + x2a*this.scale,
+			this.height/2 - y2*this.scale);
+	this.ctx.closePath();
+	this.ctx.fill();
+    },
+    add_corner: function(type) {
+	this.ctx.save();
+	this.ctx.fillStyle = "rgb(0,255,255)";
+	this.b.add_corner(this, type);
+	this.ctx.restore();
+    },
+    add_axis:  function() {
+	this.ctx.save();
+	this.ctx.fillStyle = "rgb(255,0,0)";
+	this.b.add_axis(this);
+	this.ctx.restore();
+    },
+    add_grid:  function() {
+	this.ctx.save();
+	this.ctx.fillStyle = "rgb(0,255,0)";
+	this.b.add_grid(this);
+	this.ctx.restore();
+    }
+};
+
+function PdfTile(b) {
+    this.b = b;
+    this.ctx = new PDFDocument();
+    this.stream = this.ctx.pipe(blobStream());
+    this.ctx.fillColor("#000000");
+    this.width = 500;
+    this.height = 500;
+    this.dim = 500;
+    this.color_new = false;
+    this.ctx.translate(56,72);
+    this.ctx.moveTo(0,0);
+    this.ctx.lineTo(this.width,0);
+    this.ctx.lineTo(this.width,this.height);
+    this.ctx.lineTo(0,this.height);
+    this.ctx.closePath();
+    this.ctx.clip();
+    this.scale = 0;
+    this.cnt_total = 0;
+    this.cnt_new = 0;
+}
+PdfTile.prototype = {
+    min_x: function() {return -this.width/(2*this.scale);},
+    max_x: function() {return this.width/(2*this.scale);},
+    min_y: function() {return -this.height/(2*this.scale);},
+    max_y: function() {return this.height/(2*this.scale);},
+    finish: function(status,name) {
+        status.innerHTML = "writing...";
+        var stream = this.stream;
+        stream.on('finish', function() {
+	    var url = stream.toBlobURL('application/pdf');
+            var a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('target', '_blank');
+            a.setAttribute('download', name + '.pdf');
+            a.appendChild(document.createTextNode("Download"));
+            status.innerHTML = '';
+            status.appendChild(a);
+	    a.onclick = function() {status.removeChild(a); return true;}
+	    a.click();
+        });
+        this.ctx.end();
+    },
+    set_scale: function(scale, sz, type) {
+	this.scale = scale;
+	if (sz) {
+	    var s = this.b.size(sz);
+	    while (s * this.scale > this.dim) this.scale /= 2;
+	    while (s * this.scale * 2 <= this.dim) this.scale *= 2;
+	}
+    },
+    set_nscale: function(nscale, type) {
+	this.scale = this.dim / this.b.size(nscale, type);
+    },
+    draw_tile: function(n, type) {
+	this.cnt_total = 0;
+	this.cnt_new = 0;
+	var cnt_incr = 0;
+
+	this.b.iterate(n,type,this,
+		       function(ctx,p,is_new){
+			   this.draw (ctx, p, is_new);
+			   cnt_incr++;
+		       },
+		       function(ctx,i){
+			   ctx.cnt_new = cnt_incr;
+			   ctx.cnt_total += cnt_incr;
+			   cnt_incr = 0;
+		       });
+    },
+    draw_rect: function(x1,y1,x2,y2) {
+	this.draw_poly([[x1,y1],[x2,y1],[x2,y2],[x1,y2]],false);
+    },
+    draw_poly: function(p,is_new) {
+        this.ctx.save();
+        if (this.color_new && is_new) {
+	    this.ctx.fillColor("#0000ff");
+        }
+	var l = p.length;
+	this.ctx.moveTo (this.width/2 + p[0][0] * this.scale,
+			 this.height/2 - p[0][1] * this.scale);
+	for (var i=1; i<l; i++) {
+	    this.ctx.lineTo (this.width/2 + p[i][0] * this.scale,
+			     this.height/2 - p[i][1] * this.scale);
+	}
+	this.ctx.closePath();
+	this.ctx.fill();
+        this.ctx.restore();
+    },
+    draw_qc: function(qc,clip,is_new) {
+	this.ctx.save();
+        if (this.color_new && is_new) {
+	    this.ctx.fillColor("#0000ff");
+        }
+	if (clip && clip.length) {
+	    this.ctx.moveTo (this.width/2 + clip[0][0] * this.scale,
+			     this.height/2 - clip[0][1] * this.scale);
+	    for (var i=1; i<clip.length; i++) {
+		this.ctx.lineTo (this.width/2 + clip[i][0] * this.scale,
+				 this.height/2 - clip[i][1] * this.scale);
+	    }
+	    this.ctx.closePath();
+	    this.ctx.clip();
+	}
+	var k = 4/3*(Math.sqrt(2)-1);
+	for (var i=0; i<qc.length; i += 6) {
+	    this.ctx.moveTo(this.width/2 + qc[i+0][0] * this.scale,
+			    this.height/2 - qc[i+0][1] * this.scale);
+	    this.ctx.bezierCurveTo(this.width/2 + (qc[i+0][0]*(1-k) + qc[i+1][0]*k)*this.scale,
+				   this.height/2 - (qc[i+0][1]*(1-k) + qc[i+1][1]*k)*this.scale,
+				   this.width/2 + (qc[i+2][0]*(1-k) + qc[i+1][0]*k)*this.scale,
+				   this.height/2 - (qc[i+2][1]*(1-k) + qc[i+1][1]*k)*this.scale,
+				   this.width/2 + qc[i+2][0]*this.scale,
+				   this.height/2 - qc[i+2][1]*this.scale);
+	    this.ctx.lineTo(this.width/2 + qc[i+3][0] * this.scale,
+			    this.height/2 - qc[i+3][1] * this.scale);
+	    this.ctx.bezierCurveTo(this.width/2 + (qc[i+3][0]*(1-k) + qc[i+4][0]*k)*this.scale,
+				   this.height/2 - (qc[i+3][1]*(1-k) + qc[i+4][1]*k)*this.scale,
+				   this.width/2 + (qc[i+5][0]*(1-k) + qc[i+4][0]*k)*this.scale,
+				   this.height/2 - (qc[i+5][1]*(1-k) + qc[i+4][1]*k)*this.scale,
+				   this.width/2 + qc[i+5][0]*this.scale,
+				   this.height/2 - qc[i+5][1]*this.scale);
+	    this.ctx.closePath();
+	    this.ctx.fill();
+	}
+	this.ctx.restore();
+    },
+    // cw around trapezoid: (x1,y1a),(x1,y1b),(x2,y2b),(x2,y2a)
+    draw_vert_trap: function(x1,y1a,y1b,x2,y2a,y2b) {
+	this.ctx.moveTo(this.width/2 + x1*this.scale,
+			this.height/2 - y1a*this.scale);
+	this.ctx.lineTo(this.width/2 + x1*this.scale,
+			this.height/2 - y1b*this.scale);
+	this.ctx.lineTo(this.width/2 + x2*this.scale,
+			this.height/2 - y2b*this.scale);
+	this.ctx.lineTo(this.width/2 + x2*this.scale,
+			this.height/2 - y2a*this.scale);
+	this.ctx.closePath();
+	this.ctx.fill();
+    },
+    // cw around trapezoid: (x1a,y1),(x1b,y1),(x2b,y2),(x2a,y2)
+    draw_horiz_trap: function(x1a, x1b, y1, x2a, x2b, y2) {
+	this.ctx.moveTo(this.width/2 + x1a*this.scale,
+			this.height/2 - y1*this.scale);
+	this.ctx.lineTo(this.width/2 + x1b*this.scale,
+			this.height/2 - y1*this.scale);
+	this.ctx.lineTo(this.width/2 + x2b*this.scale,
+			this.height/2 - y2*this.scale);
+	this.ctx.lineTo(this.width/2 + x2a*this.scale,
+			this.height/2 - y2*this.scale);
+	this.ctx.closePath();
+	this.ctx.fill();
+    },
+    add_corner: function(type) {
+	this.ctx.save();
+	this.ctx.fillColor("#00ffff");
+	this.b.add_corner(this, type);
+	this.ctx.restore();
+    },
+    add_axis: function() {
+	this.ctx.save();
+	this.ctx.fillColor("#ff0000");
+	this.b.add_axis(this);
+	this.ctx.restore();
+    },
+    add_grid: function() {
+	this.ctx.save();
+	this.ctx.fillColor("#00ff00");
+	this.b.add_grid(this);
+	this.ctx.restore();
+    }
+};
+
+//marker
+var Sequences = [A139250,A194700,A194270,A182840,A187210,A172310,A161206,A187220,A160120,A160172,A161328,A161644,A147562,A151725,A151723,A151907,A169707,A169709,A169649,A170896,A151895,A267190,knight,corner,y_analog,tetris_piece,ytoothpickanalog,sierpienski,batarang];
+
+function findSequence(name) {
+    for (var s=0; s<Sequences.length; s++) {
+	if (Sequence.applies(Sequences[s],name)) {
+	    return new (Sequences[s])();
+	}
+    }
+    return null;
+}
+
+function draw_img(name, n, size, nscale, seqtype, add_corner, add_axis, add_grid, add_gaps, color_new) {
+    var seq = findSequence(name);
+    if (!seq) return;
+    if (add_gaps) {
+	seq.gap = seq.defgap;
+	seq.wid2 = seq.wid;
+    } else {
+	seq.gap = 0;
+	seq.wid2 = 0;
+    }
+    var tile = new CanvasTile(seq);
+    tile.set_nscale((nscale > 0) ? nscale : n, seqtype);
+    if (add_corner) tile.add_corner(seqtype);
+    if (add_axis) tile.add_axis();
+    if (add_grid) tile.add_grid();
+    tile.color_new = color_new;
+    tile.draw_tile(n, seqtype);
+    var s = document.getElementById("image_n");
+    if (s) s.innerHTML = n.toString();
+    s = document.getElementById("image_total");
+    if (s) s.innerHTML = tile.cnt_total.toString();
+    s = document.getElementById("image_new");
+    if (s) s.innerHTML = tile.cnt_new.toString();
+}
+
+function draw_pdf(name, n, size, nscale, seqtype, add_corner, add_axis, add_grid, add_gaps, color_new) {
+    var status = document.getElementById('pdfstatus');
+    status.innerHTML = "drawing...";
+    var seq = findSequence(name);
+    if (!seq) return;
+    if (add_gaps) {
+	seq.gap = seq.defgap;
+	seq.wid2 = seq.wid;
+    } else {
+	seq.gap = 0;
+	seq.wid2 = 0;
+    }
+    var tile = new PdfTile(seq);
+    tile.set_nscale((nscale > 0) ? nscale : n, seqtype);
+    if (add_corner) tile.add_corner(seqtype);
+    if (add_axis) tile.add_axis();
+    if (add_grid) tile.add_grid();
+    tile.color_new = color_new;
+    tile.draw_tile(n, seqtype);
+//    var s = document.getElementById("image_n");
+//    if (s) s.innerHTML = n.toString();
+//    s = document.getElementById("image_total");
+//    if (s) s.innerHTML = tile.cnt_total.toString();
+//    s = document.getElementById("image_new");
+//    if (s) s.innerHTML = tile.cnt_new.toString();
+    document.getElementById('pdfbutton').disabled = false;
+    tile.finish(status, seq.total_name(seqtype) + "." + n.toString());
+}
+    </script>    
+    <script type="application/javascript">
+      var timerID;
+      var running = new Boolean(false);
+      var intro = new Boolean(false);
+      var intro_step = 0;
+      var slide = 0;
+      var maxslide = 29;
+      function radiovalue(r) {
+        if (r.length === undefined) {
+          return r.value;
+        }
+        for (var i=0; i<r.length; i++) {
+          if (r[i].checked == true) return r[i].value;
+        }
+        return undefined;
+      }                           
+      function selectvalue(r) {
+	  var i = r.selectedIndex;
+	  if (i == -1) return undefined;
+	  return r[i].value;
+      }                           
+      function select_setvalue(r,v) {
+	  for (var i = 0; i<r.length; i++) {
+	      if (r[i].value == v) {
+		  r[i].selected = true;
+		  return true;
+	      }
+	  }
+	  return false;
+      }                           
+      function update_img () {
+        var f = document.getElementById('values');
+        var nm = selectvalue(f.sequence_list);
+        if (f.fixscale.checked == true && f.scale.value != 0 && parseInt(f.n.value) > parseInt(f.scale.value)) {
+          f.scale.value = '0';
+        }
+        var flag = f.flags.value;
+        if (f.grid.checked == true) flag |= 6;
+        if (f.gaps.checked == true) flag |= 8;
+          draw_img(nm, parseInt(f.n.value), parseInt(f.size.value),
+                   parseFloat(f.scale.value), parseInt(radiovalue(f.seqtype)), 
+		   (f.flags.value & 1), (f.flags.value & 2) | f.grid.checked,
+		   (f.flags.value & 4) | f.grid.checked,
+                   (f.flags.value & 8) | f.gaps.checked,
+                   f.color_new.checked);
+        loaded_image();
+        return false;
+      }
+      function generate_pdf () {
+        document.getElementById('pdfbutton').disabled = true;
+        var f = document.getElementById('values');
+        var nm = selectvalue(f.sequence_list);
+        if (f.fixscale.checked == true && f.scale.value != 0 && parseInt(f.n.value) > parseInt(f.scale.value)) {
+          f.scale.value = '0';
+        }
+        var flag = f.flags.value;
+        if (f.grid.checked == true) flag |= 6;
+        if (f.gaps.checked == true) flag |= 8;
+          draw_pdf(nm, parseInt(f.n.value), parseInt(f.size.value),
+                   parseFloat(f.scale.value), parseInt(radiovalue(f.seqtype)), 
+		   (f.flags.value & 1), (f.flags.value & 2) | f.grid.checked,
+		   (f.flags.value & 4) | f.grid.checked,
+                   (f.flags.value & 8) | f.gaps.checked,
+                   f.color_new.checked);
+        return false;
+      }
+      function generate_data () {
+          var f = document.getElementById('values');
+          var nm = selectvalue(f.sequence_list);
+	  var n = parseInt(f.gen_limit.value);
+	  var seqtype = radiovalue(f.seqtype);
+	  var seq = findSequence(nm);
+	  if (!seq) return;
+	  document.getElementById('generate_area').hidden = false;
+	  document.getElementById('hide_data_button').hidden = false;
+//	  console.time("generate");
+	  seq.generate (n, seqtype, 
+			document.getElementById('total_list'),
+			document.getElementById('total_bfile'), 
+			document.getElementById('incr_list'),
+			document.getElementById('incr_bfile'));
+//	  console.timeEnd("generate");
+      }
+      function hide_data () {
+	  document.getElementById('generate_area').hidden = true;
+	  document.getElementById('hide_data_button').hidden = true;
+	  document.getElementById('compare_results').hidden = true;
+      }
+      function compare () {
+          generate_data();
+          var f = document.getElementById('values');
+          var res = document.getElementById('compare_results');
+	  res.hidden = false;
+          res.innerHTML="<br/>";
+          var nm = selectvalue(f.sequence_list);
+	  var n = parseInt(f.gen_limit.value);
+	  var seqtype = radiovalue(f.seqtype);
+	  var seq = findSequence(nm);
+	  if (!seq) return;
+          var turl = seq.total_url(seqtype) + "/list";
+          var treq = new XMLHttpRequest();
+          treq.addEventListener("load", function(e) {compare_seqlist (treq,seq.total_name(seqtype),document.getElementById('total_bfile'),res,seq.compare_delta(seqtype,"total"));});
+          treq.responseType = "document";
+          treq.open("GET",turl);
+          treq.send();
+          var iurl = seq.incr_url(seqtype) + "/list";
+          var ireq = new XMLHttpRequest();
+          ireq.addEventListener("load", function(e) {compare_seqlist (ireq,seq.incr_name(seqtype),document.getElementById('incr_bfile'),res,seq.compare_delta(seqtype,"incr"));});
+          ireq.responseType = "document";
+          ireq.open("GET",iurl);
+          ireq.send();
+      }
+      function compare_bfile () {
+          generate_data();
+          var f = document.getElementById('values');
+          var res = document.getElementById('compare_results');
+	  res.hidden = false;
+          res.innerHTML="<br/>";
+          var nm = selectvalue(f.sequence_list);
+	  var n = parseInt(f.gen_limit.value);
+	  var seqtype = radiovalue(f.seqtype);
+	  var seq = findSequence(nm);
+	  if (!seq) return;
+          var tnm = seq.total_name(seqtype);
+          var turl = seq.total_url(seqtype) + "/" + tnm.split(" ")[0].replace("A","b")+".txt";
+          var treq = new XMLHttpRequest();
+          treq.addEventListener("load", function(e) {compare_bdata (treq,tnm,document.getElementById('total_bfile'),res,seq.compare_delta(seqtype,"total"));});
+          treq.responseType = "text";
+          treq.open("GET",turl);
+          treq.send();
+          var inm = seq.incr_name(seqtype);
+          var iurl = seq.incr_url(seqtype) + "/" + inm.split(" ")[0].replace("A","b")+".txt";
+          var ireq = new XMLHttpRequest();
+          ireq.addEventListener("load", function(e) {compare_bdata (ireq,inm,document.getElementById('incr_bfile'),res,seq.compare_delta(seqtype,"incr"));});
+          ireq.responseType = "text";
+          ireq.open("GET",iurl);
+          ireq.send();
+      }
+      function compare_seqlist (req,label, text,res,delta) {
+        var xml = req.responseXML;
+        var tbl = xml.getElementsByTagName("TABLE")[3];
+        if (tbl === undefined) {
+            res.innerHTML += label + " No sequence data<br/>";
+            return;
+        }
+        var tr = tbl.childNodes[1];
+        var td = tr.firstChild.nextSibling;
+        var data = text.value.split("\n");
+        var datarow = 0;
+        var td_n, td_an, data_n, data_an;
+        var diffcnt = 0;
+        while (td && datarow < data.length-1 && diffcnt < 10) {
+            datavals=data[datarow].split(" ");
+            data_n=parseInt(datavals[0]);
+            data_an=parseInt(datavals[1]);
+            td_n=parseInt(td.childNodes[1].textContent);
+            // special case for cons:
+            if (td_n < 0 && label == "A151798") td_n = -td_n;
+            td_an=parseInt(td.childNodes[3].textContent);
+            if (data_n < td_n+delta) {
+                res.innerHTML+=label + " Only in gen: " + data_n + " " + data_an + "<br/>";
+                diffcnt++;
+                datarow++;
+            } else if (td_n+delta < data_n) {
+                res.innerHTML+=label + " Only in seq: " + td_n + " " + td_an + "<br/>";
+                diffcnt++;
+                td = td.nextSibling;
+            } else {
+                if (td_an !== data_an) {
+                    res.innerHTML+=label + " DIFF:" + data_n + " seq " + td_an + " gen " + data_an + "<br/>";
+                    diffcnt++;
+                }
+                datarow++;
+                td = td.nextSibling;
+            }
+        }
+        res.innerHTML+=label + " checked through " + data_n + "<br/>";
+      }
+      function compare_bdata (req,label, text,res,delta) {
+        var btext = req.responseText;
+        if (btext.includes("the page you requested was not found")) {
+            res.innerHTML += label + " No sequence data<br/>";
+            return;
+        }
+        var bdata = btext.split("\n");
+        bdatarow=0;
+        while (bdatarow < bdata.length && bdata[bdatarow].startsWith("#")) bdatarow++;
+        var data = text.value.split("\n");
+        var datarow = 0;
+        var td_n, td_an, data_n, data_an;
+        var diffcnt = 0;
+        while (bdatarow < bdata.length-1 && datarow < data.length-1 && diffcnt < 10) {
+            datavals=data[datarow].split(" ");
+            data_n=parseInt(datavals[0]);
+            data_an=parseInt(datavals[1]);
+            bdatavals=bdata[bdatarow].split(" ");
+            td_n=parseInt(bdatavals[0]);
+            td_an=parseInt(bdatavals[1]);
+            if (data_n < td_n+delta) {
+                res.innerHTML+=label + " Only in gen: " + data_n + " " + data_an + "<br/>";
+                diffcnt++;
+                datarow++;
+            } else if (td_n+delta < data_n) {
+                res.innerHTML+=label + " Only in seq: " + td_n + " " + td_an + "<br/>";
+                diffcnt++;
+                bdatarow++;
+            } else {
+                if (td_an !== data_an) {
+                    res.innerHTML+=label + " DIFF:" + data_n + " seq " + td_an + " gen " + data_an + "<br/>";
+                    diffcnt++;
+                }
+                datarow++;
+                bdatarow++;
+            }
+        }
+        res.innerHTML+=label + " checked through " + data_n + "<br/>";
+      }
+      function next_img () {
+        var f = document.getElementById('values');
+        /* 
+        if (f.deltamultiply.checked == true) {
+          var m;
+          if (f.delta.value.substr(0,1) == "/") {
+            m = parseFloat(f.delta.value.substr(1));
+            m = Math.pow(2.0,1.0/m);
+          } else {
+            m = parseFloat(f.delta.value);
+          }
+          var v = parseInt(f.n.value);
+          nv = Math.round(v * m);
+          if (nv <= v) nv = v + 1;
+          f.n.value = nv;
+        } else {
+          f.n.value = parseInt(f.n.value) + parseInt(f.delta.value);
+        }
+        */
+        f.n.value++;
+        update_img ();
+        return false;
+      }
+      function prev_img () {
+          var f = document.getElementById('values');
+          f.n.value--;
+	  if (f.n.value < 1) f.n.value = 1;
+          update_img ();
+          return false;
+      }
+      function loaded_image () {
+        if (running == true) {
+          if (intro == true) {
+             do_intro (intro_step);
+          }
+          var f = document.getElementById('values');
+          timerID=window.setTimeout("next_img();", f.delay.value);
+        }
+      }  
+      function start_run () {
+        if (timerID) {
+          window.clearTimeout(timerID);
+          timerID = undefined;
+        }
+        running = true;
+        next_img ();
+      }
+      function stop_run () {
+        if (timerID) {
+          window.clearTimeout(timerID);
+          timerID = undefined;
+        }
+        running = false;
+        intro = false;
+        intro_step = 0;
+      }
+      function check_multiply () {
+        var f = document.getElementById('values');
+        if (f.delta.value == 1) {
+          f.delta.value = 1.05;
+        }
+      }
+      function check_add () {
+        var f = document.getElementById('values');
+        var v = Math.round(parseFloat(f.delta.value));
+        if (v != f.delta.value) {
+          if (v == 0) f.delta.value = 1;
+          else f.delta.value = v;
+        }
+      }
+      function change_delta () {
+        var f = document.getElementById('values');
+        if (f.delta.value.substr(0,1) == "/") {
+           f.deltamultiply.checked = true;
+        }
+      }
+      function change_size () {
+        var f = document.getElementById('values');
+        var i = document.getElementById('canvas-picture');
+        i.width = f.size.value;
+        i.height = f.size.value;
+	update_img();
+      }
+      function change_sequence () {
+          var f = document.getElementById('values');
+	  var anum = selectvalue(f.sequence_list);
+	  var seq;
+	  var oldtype = radiovalue(f.seqtype);
+	  for (var s=0; s<Sequences.length; s++) {
+	      if (Sequence.applies(Sequences[s],anum)) {
+		  seq = Sequences[s];
+		  break;
+	      }
+	  }
+	  if (!seq) return;
+	  if (seq.desc === undefined) return;
+          var tbl = document.getElementById('typetable');
+          while (tbl.firstChild) tbl.removeChild(tbl.firstChild);
+          var row = null;
+          var rowcnt = 0;
+          var first = undefined;
+          var found = false;
+	  for (var n in TileType.properties.name) {
+	      var v = TileType.properties.name[n];
+	      if (v in seq.desc) {
+                  if (!row) {
+                      row = document.createElement("tr");
+                      tbl.appendChild(row);
+                      rowcnt = 0;
+                  }
+                  var td = document.createElement("td");
+                  td.setAttribute("valign","top");
+                  var b = document.createElement("input");
+                  b.setAttribute("type","radio");
+                  b.id = "input:" + v;
+                  b.name = "seqtype";
+                  b.value = n;
+                  if (n === oldtype) {
+                      b.checked = true;
+                      found = true;
+                  } else {
+                      b.checked = false;
+                  }
+                  if (first === undefined) first = b;
+                  b.onchange = change_type;
+                  td.appendChild(b);
+                  td.appendChild(document.createTextNode(TileType.properties.prettyname[n]));
+                  row.appendChild(td);
+                  rowcnt++;
+                  if (rowcnt >= 3) row = null;
+              }
+          }
+          if (!found) first.checked = true;
+	  change_type();
+      }
+      function change_type () {
+          var f = document.getElementById('values');
+          var nm = selectvalue(f.sequence_list);
+	  var seq;
+	  for (var s=0; s<Sequences.length; s++) {
+	      if (Sequence.applies(Sequences[s],nm)) {
+		  seq = Sequences[s];
+		  break;
+	      }
+	  }
+	  document.getElementById('label_total').innerHTML = "Total:";
+	  document.getElementById('label_incr').innerHTML = "New:";
+	  document.getElementById('label_total_bfile').innerHTML = "Total";
+	  document.getElementById('label_incr_bfile').innerHTML = "New";
+	  document.getElementById('label_total_list').innerHTML = "Total:";
+	  document.getElementById('label_incr_list').innerHTML = "New:";
+	  document.getElementById('total_list').innerHTML = "";
+	  document.getElementById('total_bfile').innerHTML = ""; 
+	  document.getElementById('incr_list').innerHTML = "";
+	  document.getElementById('incr_bfile').innerHTML = "";
+	  var t = radiovalue(f.seqtype);
+	  var total_name = Sequence.total_name(seq,t);
+	  var total_url = Sequence.total_url(seq,t);
+	  var total_lbl = (total_url) 
+	      ? 'Total (<a href="' + total_url + '">' + total_name + '</a>)'
+	      : 'Total (' + total_name + ')';
+	  document.getElementById('label_total').innerHTML = total_lbl + ":";
+	  document.getElementById('label_total_bfile').innerHTML = total_lbl;
+	  document.getElementById('label_total_list').innerHTML = total_lbl + ":";
+	  var incr_name = Sequence.incr_name(seq,t);
+	  var incr_url = Sequence.incr_url(seq,t);
+	  var incr_lbl = (incr_url) 
+	      ? 'New (<a href="' + incr_url + '">' + incr_name + '</a>)'
+	      : 'New (' + incr_name + ')';
+	  document.getElementById('label_incr').innerHTML = incr_lbl + ":";
+	  document.getElementById('label_incr_bfile').innerHTML = incr_lbl;
+	  document.getElementById('label_incr_list').innerHTML = incr_lbl + ":";
+
+//	  var tnm = TileType.properties.name[t];
+//	  if (seq.desc[tnm]) {
+//	      if (seq.desc[tnm].total) {
+//		  var anum = seq.desc[tnm].total;
+//		  var h = 'Total (<a href="https://oeis.org/' + anum + '">' + anum + '</a>)';
+//		  document.getElementById('label_total').innerHTML = h + ":";
+//		  document.getElementById('label_total_bfile').innerHTML = h;
+//		  document.getElementById('label_total_list').innerHTML = h + ":";
+//	      }
+//	      if (seq.desc[tnm].incr) {
+//		  var anum = seq.desc[tnm].incr;
+//		  var h = 'New (<a href="https://oeis.org/' + anum + '">' + anum + '</a>)';
+//		  document.getElementById('label_incr').innerHTML = h + ":";
+//		  document.getElementById('label_incr_bfile').innerHTML = h;
+//		  document.getElementById('label_incr_list').innerHTML = h + ":";
+//	      }
+
+	  var tnm = TileType.properties.name[t];
+	  if (seq.desc[tnm]) {
+	      catalog_select (seq.desc[tnm].total,seq.desc[tnm].incr);
+	  }
+          hide_data();
+	  update_img();
+      }
+      var SequenceMap = {};
+      function create_catalog () {
+	  var f = document.getElementById('values');
+	  var seqlist = [];
+	  for (var s=0; s<Sequences.length; s++) {
+	      var seq = Sequences[s];
+	      var opt = document.createElement("option");
+	      opt.value = seq.desc.name;
+	      opt.text = seq.desc.label;
+	      opt.id = seq;
+	      f.sequence_list.add(opt, null);
+	      for (t in TileType.properties.name) {
+		  var tnm = TileType.properties.name[t];
+		  if (seq.desc[tnm] && seq.desc[tnm].total) {
+		      var seqname = seq.desc[tnm].total;
+		      if (seqname in SequenceMap) {
+                          if (seq.desc[tnm].priority === undefined) {
+                              console.log(seqname + " duplicate but no priority");
+                          }
+                          if (seq.desc[tnm].priority > SequenceMap[seqname].priority) {
+			      SequenceMap[seqname] = {seq: Sequences[s], type: tnm, option: "total", priority: seq.desc[tnm].priority};
+                          }
+                      } else {
+			  seqlist.push(seqname);
+			  SequenceMap[seqname] = {seq: Sequences[s], type: tnm, option: "total", priority: seq.desc[tnm].priority};
+		      }
+		  }
+		  if (seq.desc[tnm] && seq.desc[tnm].incr) {
+		      var seqname = seq.desc[tnm].incr;
+		      if (seqname in SequenceMap) {
+                          if (seq.desc[tnm].priority === undefined) {
+                              console.log(seqname + " duplicate but no priority");
+                          }
+                          if (seq.desc[tnm].priority > SequenceMap[seqname].priority) {
+			      SequenceMap[seqname] = {seq: Sequences[s], type: tnm, option: "incr", priority: seq.desc[tnm].priority};
+                          }
+                      } else {
+			  seqlist.push(seqname);
+			  SequenceMap[seqname] = {seq: Sequences[s], type: tnm, option: "incr", priority: seq.desc[tnm].priority};
+		      }
+		  }
+	      }
+	  }
+	  seqlist.sort();
+	  for (var i=0; i<seqlist.length; i++) {
+	      var s = seqlist[i];
+	      var opt = document.createElement("option");
+	      opt.value = s;
+	      opt.text = s;
+	      f.sequence_catalog.add(opt, null);
+	  }
+      }
+      function catalog_select(tot,inc) {
+	  var f = document.getElementById('values');
+	  var sel = f.sequence_catalog;
+	  select_setvalue (sel, tot) || select_setvalue (sel, inc);
+      }
+      function catalog_choice() {
+	  var f = document.getElementById('values');
+	  var anum = selectvalue(f.sequence_catalog);
+	  if (!(anum in SequenceMap)) return;
+	  var seq = SequenceMap[anum].seq;
+	  var type = SequenceMap[anum].type;
+	  var baseanum = seq.desc.NORMAL.total;
+	  if (!select_setvalue (f.sequence_list, baseanum)) {
+	      console.log("no baseanum");
+	  }
+          change_sequence();
+	  b = document.getElementById("input:" + type);
+	  if (b) {
+	      b.checked = true;
+	  } else {
+	      console.log("no input:...");
+	  }
+	  change_type();
+          select_setvalue (f.sequence_catalog, anum);
+      }
+
+      function initialize () {
+	  create_catalog();
+	  change_sequence();
+      }
+	  
+      function do_reset (do_size, do_image) {
+        stop_run ();
+        var f = document.getElementById('values');
+        f.sequence_list[0].selected = true;
+//  document.getElementById('A139250').selected = true;
+	change_sequence();  
+        f.n.value = 1;
+        f.scale.value = 16;
+        f.fixscale.checked = true;
+        f.flags.value = 1;
+        f.grid.checked = false;
+        f.gaps.checked = false;
+        f["input:NORMAL"].checked = true;
+        f.delay.value = 100;
+        document.getElementById('description').innerHTML = '';
+        document.getElementById('slide_area').innerHTML = '';
+        document.getElementById('page_title').innerHTML = "<h2>Explorations of A139250 (Omar Pol's toothpick sequence) and other toothpick-like sequences</h2>";
+        hide_data();
+        slide = 0;
+          if (do_size == true) {
+	      f.size.value = 500;
+	      change_size();
+	  }
+	change_sequence();
+      }
+      function do_intro (step) {
+        var f = document.getElementById('values');
+        var l = document.getElementById('description');
+        if (step == 0) {
+          do_reset (false, true);
+          intro = true;
+          l.innerHTML += 'Start with one (vertical) toothpick.<br>';
+          timerID=window.setTimeout("do_intro(1);", 2000);
+        } else if (step == 1) {
+          l.innerHTML += 'In each round, put a toothpick across every uncovered end.<br>The image shows the figure after <b>N</b> rounds.<br><b>Next</b> moves to the next round.<br>';
+          f.n.value = 2;
+          update_img ();
+          timerID=window.setTimeout("do_intro(2);", 2000);
+        } else if (step == 2) {
+          l.innerHTML += 'As you repeat, the pattern becomes more complex.<br><b>Run</b> repeatedly moves to the next round.  <b>Stop</b> stops the repetition.<br>';
+          f.delay.value=500;
+          intro_step = step+1;
+          start_run ();
+        } else if (step == 3) {
+          if (f.n.value == 12) {
+             l.innerHTML += 'If <b>adjust scale</b> is checked, when N exceeds scale, scale is reset to 0, which means autoscale.<br>';
+             intro_step = step+1;
+          }
+        } else if (step == 4) {
+          if (f.n.value == 24) {
+             l.innerHTML += 'The <b>Delay</b> value controls the delay between iterations.<br>';
+             f.delay.value=200;
+             intro_step = step+1;
+          }
+        } else if (step == 5) {
+           if (f.n.value == 48) {
+             l.innerHTML += 'The <b>Delta</b> value controls the change in <b>N</b> between iterations.<br>';
+             f.delta.value=2;
+             intro_step = step+1;
+           }
+        } else if (step == 6) {
+           if (f.n.value == 96) {
+             l.innerHTML += 'Delta can also be made multiplicative, by checking <b>Multiply</b>.<br>';
+             f.deltamultiply.checked = true;
+             f.delta.value=1.03;
+             intro_step = step+1;
+           }
+        } else if (step == 7) {
+           if (f.n.value >= 200) {
+             l.innerHTML += 'For convenience, a delta value of /xxx is shorthand for 2^(1/xxx).<br>';
+             f.delta.value='/15';
+             intro_step = step+1;
+           }
+        } else if (step == 8) {
+          if (f.n.value >= 500) {
+            l.innerHTML += 'Several sequences with related motivation can also be viewed<br>';
+            l.innerHTML += '<a href=http://oeis.org/A147562>A147562</a> begins with a square, and places a square if only one of its four neighbors is occupied.<br>';
+            f.A147562.checked = true;
+            f.n.value = 1;
+            f.scale.value = 8;
+            f.fixscale.checked = true;
+            f.deltaadd.checked = true;
+            f.delta.value = 1;
+            f.delay.value = 500;
+            update_img();
+            intro_step = step+1;
+          }
+        } else if (step == 9) {
+          if (f.n.value == 20) {
+            l.innerHTML += '<a href=http://oeis.org/A151723>A151723</a> begins with a hexagon, and places a hexagon if only one of its six neighbors is occupied.<br>';
+            f.A151723.checked = true;
+            f.n.value = 1;
+            f.scale.value = 8;
+            f.fixscale.checked = true;
+            f.deltaadd.checked = true;
+            f.delta.value = 1;
+            f.delay.value = 500;
+            update_img();
+            intro_step = step+1;
+          }
+        } else if (step == 10) {
+          if (f.n.value == 20) {
+            l.innerHTML += '<a href=http://oeis.org/A151725>A151725</a> begins with a square, and places a square if only one of its eight neighbors is occupied.<br>';
+            f.A151725.checked = true;
+            f.n.value = 1;
+            f.scale.value = 8;
+            f.fixscale.checked = true;
+            f.deltaadd.checked = true;
+            f.delta.value = 1;
+            f.delay.value = 500;
+            update_img();
+            intro_step = step+1;
+          }
+        } else if (step == 11) {
+          if (f.n.value == 20) {
+            l.innerHTML += '<a href=http://oeis.org/A160120>A160120</a> uses Y-shaped toothpicks.<br>';
+            f.A160120.checked = true;
+            f.n.value = 1;
+            f.scale.value = 8;
+            f.fixscale.checked = true;
+            f.deltaadd.checked = true;
+            f.delta.value = 1;
+            f.delay.value = 500;
+            update_img();
+            intro_step = step+1;
+          }
+        } else if (step == 12) {
+          if (f.n.value == 20) {
+            l.innerHTML += '<a href=http://oeis.org/A161644>A161644</a> begins with a triangle, and places a triangle if only one of its three neighbors is occupied.<br>';
+            f.A161644.checked = true;
+            f.n.value = 1;
+            f.scale.value = 8;
+            f.fixscale.checked = true;
+            f.deltaadd.checked = true;
+            f.delta.value = 1;
+            f.delay.value = 500;
+            update_img();
+            intro_step = step+1;
+          }
+        } else if (step == 13) {
+           if (f.n.value >= 20) {
+            f.A139250.checked = true;
+            f.n.value = 512;
+            f.scale.value = 0;
+            f.fixscale.checked = true;
+            f.deltamultiply.checked = true;
+            f.delta.value = "/15";
+            f.delay.value = 200;
+            intro_step = step+1;
+            l.innerHTML += 'For A139250 and A147562, the drawing takes advantage of the recursive structure, so that the time to draw an image is roughly O(log n loglog n)<br>';
+             intro_step = step+1;
+           }
+        } else if (step == 14) {
+           if (f.n.value >= 1500) {
+             l.innerHTML += 'This concludes the introduction.  As can be seen, the toothpick pattern displays a recursive, fractal-like structure<br>';
+             intro_step = 0;
+             intro = false;
+           }
+        } else {
+          l.innerHTML += 'Unknown intro step' + step + '<br>';
+        }
+      }  
+      function add_slides () {
+        var t = document.getElementById('page_title');
+        t.innerHTML = '<table height=80><tr><td><h2><span id=slide_title></span></h2></td><td><h2>&nbsp;<sup>&nbsp;</sup><br>&nbsp;<sup>&nbsp;</sup></td></tr></table>';
+        var l = document.getElementById('slide_area');
+        l.innerHTML = '';
+        l.innerHTML += "<span id=slide_num>1</span>&nbsp;"
+        l.innerHTML += "<input type='button' value='Prev' onClick='gotoslide(slide-1);return false;'>&nbsp;";
+        l.innerHTML += "<input type='button' value='Next' onClick='gotoslide(slide+1);return false;'>&nbsp;";
+        for (var i=0; i<=maxslide; i++) {
+          l.innerHTML += "<a href='javascript:gotoslide(" + i + ");'>" + i + "</a>&nbsp;";
+        }
+        gotoslide (1);
+      }
+      function gotoslide (snum) {
+        if (snum < 1) snum = 1;
+        if (snum > maxslide) snum = maxslide;
+        slide = snum;
+        stop_run ();
+        document.getElementById('slide_num').innerHTML = slide;
+        var f = document.getElementById('values');
+        f.A139250.checked = true;
+        f.normal.checked = true;
+        f.scale.value = 0;
+        f.fixscale.checked = true;
+        f.flags.value = 1;
+        f.grid.checked = false;
+        f.gaps.checked = false;
+        f.deltaadd.checked = true;
+        f.delta.value = 1;
+        f.delay.value = 1000;
+        eval("slide" + slide + "();");
+      }
+      function slide1 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Toothpicks<br>&nbsp;';
+        f.A151725.checked = true;
+        f.n.value = 2;
+        f.scale.value = 10;
+        f.fixscale.checked = false;
+        update_img ();
+      }
+      function slide2 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Virtual Toothpicks<br>&nbsp;';
+        f.n.value = 0;
+        f.scale.value = 5;
+        f.gaps.checked = true;
+        f.delay.value = 2000;
+        start_run ();
+      }
+      function slide3 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Virtual Toothpicks (cont)<br>&nbsp;';
+        f.scale.value = 5;
+        f.delay.value = 100;
+        start_run ();
+      }
+      function slide4 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Symmetry<br>&nbsp;';
+        f.n.value = 2;
+        f.scale.value = 8;
+        f.flags.value = 3;
+        update_img ();
+      }
+      function slide5 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Symmetry<br>&nbsp;';
+        f.n.value = 2;
+        f.scale.value = 8;
+        f.flags.value = 3;
+        start_run ();
+      }
+      function slide6 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Parity<br>&nbsp;';
+        f.n.value = 1;
+        f.scale.value = 8;
+        f.grid.checked = true;
+        f.gaps.checked = true;
+        update_img ();
+      }
+      function slide7 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Parity<br>&nbsp;';
+        f.n.value = 1;
+        f.scale.value = 8;
+        f.grid.checked = true;
+        f.gaps.checked = true;
+        start_run ();
+      }
+      function slide8 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Size<br>&nbsp;';
+        f.A131098.checked = true;
+        f.n.value = 1;
+        f.scale.value = 8;
+        f.grid.checked = true;
+        f.gaps.checked = true;
+        start_run ();
+      }
+      function slide9 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Repetition<br>&nbsp;';
+        f.n.value = 1;
+        f.scale.value = 8;
+        f.delay.value = 100;
+        start_run ();
+      }
+      function slide10 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Repetition<br>&nbsp;';
+        f.n.value = 2;
+        f.deltamultiply.checked = true;
+        f.delta.value = 2;
+        f.delay.value = 2500;
+        start_run ();
+      }
+      function slide11 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'The Corner<br>&nbsp;';
+        f.n.value = 0;
+        f.scale.value = 8;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide12 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'The Corner<br>&nbsp;';
+        f.n.value = 0;
+        f.scale.value = 8;
+        f.corner.checked = true;
+        f.delay.value = 200;
+        start_run ();
+      }
+      function slide13 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'The Lemma:<br>After 2<sup>k</sup>-1 iterations, a corner becomes:';
+        f.n.value = 31;
+        f.scale.value = 32;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide14 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>Base case (k=2)';
+        f.n.value = 3;
+        f.scale.value = 8;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide15 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>Assume true for k-1 (2<sup>k-1</sup>-1 steps)';
+        f.n.value = 15;
+        f.scale.value = 32;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide16 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>bottom right corner, after 2<sup>k-1</sup>-1 steps';
+        f.n.value = 15;
+        f.scale.value = 32;
+        f.variant.checked = true;
+        update_img ();
+      }
+      function slide17 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>bottom right corner, after 2(2<sup>k-1</sup>-1) = 2<sup>k</sup>-2 steps';
+        f.n.value = 30;
+        f.scale.value = 32;
+        f.variant.checked = true;
+        update_img ();
+      }
+      function slide18 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>bottom right corner, after 2<sup>k</sup>-1 steps';
+        f.n.value = 31;
+        f.scale.value = 32;
+        f.variant.checked = true;
+        update_img ();
+      }
+      function slide19 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>upper half, after 2<sup>k-1</sup>-1 steps';
+        f.n.value = 15;
+        f.scale.value = 32;
+        f.variant2.checked = true;
+        update_img ();
+      }
+      function slide20 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>upper half, after 2<sup>k-1</sup> steps';
+        f.n.value = 16;
+        f.scale.value = 32;
+        f.variant2.checked = true;
+        update_img ();
+      }
+      function slide21 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>upper half, after 2<sup>k</sup>-1 steps';
+        f.n.value = 31;
+        f.scale.value = 32;
+        f.variant2.checked = true;
+        update_img ();
+      }
+      function slide22 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Proof: (induction on k)<br>combined, after 2<sup>k</sup>-1 steps';
+        f.n.value = 31;
+        f.scale.value = 32;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide23 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: Square after 2<sup>k</sup> iterations<br>Proof: (induction on k) assume for k-1';
+        f.n.value = 16;
+        f.scale.value = 32;
+        f.normal.checked = true;
+        update_img ();
+      }
+      function slide24 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: Square after 2<sup>k</sup> iterations<br>Proof: (induction on k) after 2<sup>k</sup>-1 iterations (by lemma)';
+        f.n.value = 31;
+        f.scale.value = 32;
+        f.normal.checked = true;
+        update_img ();
+      }
+      function slide25 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: Square after 2<sup>k</sup> iterations<br>Proof: (induction on k) after 2<sup>k</sup> iterations';
+        f.n.value = 32;
+        f.scale.value = 32;
+        f.normal.checked = true;
+        update_img ();
+      }
+      function slide26 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: &Delta;C(n) (# toothpicks added to a corner in iteration n) satisfies (roughly)<br>&Delta;C(2<sup>i</sup>+j) = 2&Delta;C(j) + &Delta;C(j+1)';
+        f.n.value = 27;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide27 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: &Delta;T(n) (# toothpicks added in iteration n) satisfies (roughly)<br>if j &lt; 2<sup>i-1</sup>: &Delta;T(2<sup>i</sup>+j) = &Delta;T(j)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if j &gt; 2<sup>i-1</sup>: &Delta;T(2<sup>i</sup>+j) = 2&Delta;T(2<sup>i-1</sup>+j)+&Delta;T(2<sup>i-1</sup>+j+1)';
+        f.n.value = 27;
+        f.normal.checked = true;
+        update_img ();
+      }
+      function slide28 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Corollary: C(n) (# toothpicks in corner) and L(n) (# toothpicks in quarter) satisfy<br>C(n) = 2 L(n) + L(n+1) + 2';
+        f.n.value = 27;
+        f.corner.checked = true;
+        update_img ();
+      }
+      function slide29 () {
+        var f = document.getElementById('values');
+        var l = document.getElementById('slide_title');
+        l.innerHTML = 'Consequence: drawing large n<br>&nbsp;';
+        f.n.value = 8296333312;
+        f.normal.checked = true;
+        update_img ();
+      }
+    </script>
+  </head>
+  <body onload="initialize();">
+    <span id="page_title">
+      <h2>
+        Explorations of A139250 (Omar Pol's toothpick sequence)
+        and other toothpick-like sequences
+      </h2>
+    </span>
+    <table>
+      <tbody><tr>
+        <td valign="top">
+          <canvas width="500" height="500" id="canvas-picture">
+            This drawing only works with javascript enabled, and with "modern" browsers
+            which support the HTML5 canvas object.
+            See <a href="https://en.wikipedia.org/wiki/Canvas_element#Browser_support">
+              this summary of browser support</a> for some more information.
+          </canvas>
+        </td>
+        <td valign="top">
+          <form id="values" action="#" method="post" onsubmit="return update_img();">
+            <table><tbody><tr>
+                <td align="left"><b>Main sequence:</b></td>
+                <td>
+                  <select name="sequence_list" onchange="change_sequence();">
+                  <option value="A139250" id="function A139250() {
+    Toothpick.call(this);
+    this.desc = A139250.desc;
+}" selected="selected">A139250 - toothpick</option><option value="A194700" id="function A194700() {
+    Toothpick.call(this);
+    this.desc = A194700.desc;
+}">A194700 - D-toothpick</option><option value="A194270" id="function A194270() {
+    Toothpick.call(this);
+    this.desc = A194270.desc;
+}">A194270 - D-toothpick (second kind)</option><option value="A182840" id="function A182840() {
+    Toothpick.call(this);
+    this.desc = A182840.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}">A182840 - toothpick on hexagon</option><option value="A187210" id="function A187210() {
+    Toothpick.call(this);
+    this.desc = A187210.desc;
+}">A187210 - quarter-circle toothpick</option><option value="A172310" id="function A172310() {
+    Toothpick.call(this);
+    this.desc = A172310.desc;
+}">A172310 - L-toothpick</option><option value="A161206" id="function A161206() {
+    Toothpick.call(this);
+    this.desc = A161206.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}">A161206 - V-toothpick</option><option value="A187220" id="function A187220() {
+    Toothpick.call(this);
+    this.desc = A187220.desc;
+}">A187220 - Gull-wing toothpick</option><option value="A160120" id="function A160120() {
+    Toothpick.call(this);
+    this.desc = A160120.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}">A160120 - Y-toothpick</option><option value="A160172" id="function A160172() {
+    Toothpick.call(this);
+    this.desc = A160172.desc;
+}">A160172 - T-toothpick</option><option value="A161328" id="function A161328() {
+    Toothpick.call(this);
+    this.desc = A161328.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}">A161328 - E-toothpick</option><option value="A161644" id="function A161644() {
+    Toothpick.call(this);
+    this.desc = A161644.desc;
+    this.ys = Math.sqrt(3);
+}">A161644 - triangle</option><option value="A147562" id="function A147562() {
+    Toothpick.call(this);
+    this.desc = A147562.desc;
+}">A147562 - Ulam-Warburton</option><option value="A151725" id="function A151725() {
+    Toothpick.call(this);
+    this.desc = A151725.desc;
+}">A151725 - 8-neighbor squares</option><option value="A151723" id="function A151723() {
+    Toothpick.call(this);
+    this.desc = A151723.desc;
+    this.ys = Math.sqrt(0.75);
+    this.yoffset = 0.5;
+}">A151723 - hexagon</option><option value="A151907" id="function A151907() {
+    Toothpick.call(this);
+    this.desc = A151907.desc;
+}">A151907 - Holladay-Ulam CA</option><option value="A169707" id="function A169707() {
+    Automata.call(this);
+    this.desc = A169707.desc;
+}">A169707 - CA using rule 750</option><option value="A169709" id="function A169709() {
+    Automata.call(this);
+    this.desc = A169709.desc;
+}">A169709 - CA using rule 1006</option><option value="A169649" id="function A169649() {
+    Automata.call(this);
+    this.desc = A169649.desc;
+}">A169649 - CA using rule 942</option><option value="A170896" id="function A170896() {
+    Automata.call(this);
+    this.desc = A170896.desc;
+}">A170896 - Schrandt-Ulam CA</option><option value="A151895" id="function A151895() {
+    Automata.call(this);
+    this.desc = A151895.desc;
+}">A151895 - Schrandt-Ulam CA variant</option><option value="A267190" id="function A267190() {
+    Automata.call(this);
+    this.desc = A267190.desc;
+}">A267190 - A151895 variant</option></select>
+                </td>
+              </tr><tr align="top">
+                <td align="right" valign="top"><b>Type:</b></td>
+                <td aligh="left" valign="top">
+                  <table height="60" id="typetable"><tr><td valign="top"><input type="radio" id="input:NORMAL" name="seqtype" value="1" checked="checked">Normal</td><td valign="top"><input type="radio" id="input:CORNER" name="seqtype" value="3">Corner</td><td valign="top"><input type="radio" id="input:SECTION" name="seqtype" value="5">Section</td></tr><tr><td valign="top"><input type="radio" id="input:OUTWARD" name="seqtype" value="10">Outward</td><td valign="top"><input type="radio" id="input:OUTCORNER" name="seqtype" value="11">Outward corner</td></tr></table>
+                </td>
+              </tr>
+            </tbody></table>
+            <p>
+              Full catalog:
+               <select name="sequence_catalog" onchange="catalog_choice();">
+               <option value="A008486">A008486</option><option value="A038573">A038573</option><option value="A048883">A048883</option><option value="A130665">A130665</option><option value="A131098">A131098</option><option value="A139250" selected="selected">A139250</option><option value="A139251">A139251</option><option value="A147562">A147562</option><option value="A147582">A147582</option><option value="A151723">A151723</option><option value="A151724">A151724</option><option value="A151725">A151725</option><option value="A151726">A151726</option><option value="A151728">A151728</option><option value="A151747">A151747</option><option value="A151798">A151798</option><option value="A151895">A151895</option><option value="A151896">A151896</option><option value="A151906">A151906</option><option value="A151907">A151907</option><option value="A152978">A152978</option><option value="A152980">A152980</option><option value="A153000">A153000</option><option value="A153006">A153006</option><option value="A158799">A158799</option><option value="A159912">A159912</option><option value="A159913">A159913</option><option value="A160120">A160120</option><option value="A160121">A160121</option><option value="A160172">A160172</option><option value="A160173">A160173</option><option value="A160720">A160720</option><option value="A160721">A160721</option><option value="A161206">A161206</option><option value="A161207">A161207</option><option value="A161328">A161328</option><option value="A161329">A161329</option><option value="A161330">A161330</option><option value="A161331">A161331</option><option value="A161426">A161426</option><option value="A161427">A161427</option><option value="A161644">A161644</option><option value="A161645">A161645</option><option value="A169648">A169648</option><option value="A169649">A169649</option><option value="A169707">A169707</option><option value="A169708">A169708</option><option value="A169709">A169709</option><option value="A169710">A169710</option><option value="A170879">A170879</option><option value="A170880">A170880</option><option value="A170882">A170882</option><option value="A170883">A170883</option><option value="A170896">A170896</option><option value="A170897">A170897</option><option value="A172304">A172304</option><option value="A172305">A172305</option><option value="A172310">A172310</option><option value="A172311">A172311</option><option value="A182632">A182632</option><option value="A182633">A182633</option><option value="A182840">A182840</option><option value="A182841">A182841</option><option value="A187210">A187210</option><option value="A187211">A187211</option><option value="A187220">A187220</option><option value="A187221">A187221</option><option value="A194270">A194270</option><option value="A194271">A194271</option><option value="A194700">A194700</option><option value="A194701">A194701</option><option value="A212008">A212008</option><option value="A212009">A212009</option><option value="A220500">A220500</option><option value="A220501">A220501</option><option value="A256536">A256536</option><option value="A256537">A256537</option><option value="A266532">A266532</option><option value="A266533">A266533</option><option value="A267190">A267190</option><option value="A267191">A267191</option><option value="A267700">A267700</option></select>
+            </p>
+            <p>
+            N: <input type="text" name="n" size="10" value="1" onchange="update_img();">
+            scale: <input type="text" name="scale" size="4" value="16" onchange="update_img();">
+            size (pixels): <input type="text" name="size" size="4" value="500" onchange="change_size();">
+            </p>
+            <p>
+            <input type="submit" value="Update" hidden="" onclick="update_img();return false;">
+            <input type="button" value="Next" onclick="next_img();return false;">
+            &nbsp;
+            <input type="button" value="Prev" onclick="prev_img();return false;">
+            &nbsp;
+            <input id="pdfbutton" type="button" value="PDF" onclick="generate_pdf();return false;">
+            &nbsp;
+            <span id="pdfstatus"></span>
+            </p>
+            <p>
+              Delay: <input type="text" name="delay" size="6" value="100">
+              <input type="button" value="Run" onclick="start_run();return false;">
+              <input type="button" value="Stop" onclick="stop_run();return false;">
+            </p>
+            <p>
+            <input type="checkbox" name="fixscale" checked="checked" onchange="update_img();">adjust scale
+            &nbsp;&nbsp;
+            <input type="hidden" name="flags" value="1">
+            <input type="checkbox" name="grid" unchecked="" onchange="update_img();">grid
+            &nbsp;&nbsp;
+            <input type="checkbox" name="gaps" unchecked="" onchange="update_img();">gaps
+            &nbsp;&nbsp;
+            <input type="checkbox" name="color_new" checked="checked" onchange="update_img();">color new
+            </p>
+            <p>
+              <input type="button" value="Reset" onclick="do_reset(true,true);return false;">
+              &nbsp;&nbsp;
+<!--
+              <input type='button' value='Introduction' onClick='do_intro(0);return false;'>
+              &nbsp;&nbsp;
+-->
+<!--
+              <input type='button' value='Slides' onClick='add_slides();return false;'>
+-->
+            </p>
+            <p>
+              Limit: <input type="text" name="gen_limit" size="6" value="20">
+              <input type="button" value="Generate Data" onclick="generate_data();return false;">
+              <span id="hide_data_button" hidden="">
+                <input type="button" value="Hide Data" onclick="hide_data();return false;">
+              </span>
+            </p>
+            <p hidden="">
+              <input type="button" value="Compare" onclick="compare();return false;">
+              &nbsp;
+              <input type="button" value="Compare bfile" onclick="compare_bfile();return false;">
+              <span id="compare_results" hidden=""></span>
+            </p>
+            <p>
+              <span id="description" border="2"></span>
+            </p>
+    </form></td></tr></tbody></table>
+    N: <span id="image_n" align="right">1</span>
+    <span id="label_total">Total (<a href="https://oeis.org/A139250">A139250</a>):</span>&nbsp;<span id="image_total" align="right">1</span>
+    <span id="label_incr">New (<a href="https://oeis.org/A139251">A139251</a>):</span>&nbsp;<span id="image_new" align="right">1</span>
+    <br>
+    <span id="generate_area" hidden="">
+      <p>
+      </p><table>
+        <tbody><tr>
+          <td align="right" valign="top"><span id="label_total_list">Total (<a href="https://oeis.org/A139250">A139250</a>):</span></td>
+          <td align="left" valign="top"><textarea id="total_list" cols="90" rows="1" readonly="readonly"></textarea></td>
+        </tr>
+        <tr>
+          <td align="right" valign="top"><span id="label_incr_list">New (<a href="https://oeis.org/A139251">A139251</a>):</span></td>
+          <td align="left" valign="top"><textarea id="incr_list" cols="90" rows="1" readonly="readonly"></textarea></td>
+        </tr>
+      </tbody></table>
+      <br>
+      <table>
+        <tbody><tr>
+          <td align="center"><span id="label_total_bfile">Total (<a href="https://oeis.org/A139250">A139250</a>)</span></td>
+          <td align="center"><span id="label_incr_bfile">New (<a href="https://oeis.org/A139251">A139251</a>)</span></td>
+        </tr>
+        <tr>
+          <td><textarea id="total_bfile" cols="20" rows="20" readonly="readonly"></textarea></td>
+          <td><textarea id="incr_bfile" cols="20" rows="20" readonly="readonly"></textarea></td>
+        </tr>
+      </tbody></table>
+      <p></p>
+    </span>
+    <br>
+    <span id="slide_area" border="2"></span>
+    
+    <h3>Instructions</h3>
+    See the OEIS entries for
+    <a href="http://oeis.org/A139250">A139250</a>,
+    <a href="http://oeis.org/A147562">A147562</a>,
+    <a href="http://oeis.org/A151723">A151723</a>,
+    <a href="http://oeis.org/A151725">A151725</a>,
+    <a href="http://oeis.org/A160120">A160120</a>,
+    <a href="http://oeis.org/A161644">A161644</a>,
+    and
+    <a href="http://oeis.org/A160720">A160720</a>
+    for a description of the toothpick sequence and some other related
+    sequences, and some background.
+    <p>
+      Select a sequence, enter a value of <b>N</b> and click <b>Update</b>
+      to draw the figure after <b>N</b> iterations.
+    </p>
+    <p>
+      <b>Type</b> selects the type of figure drawn.  <b>Normal</b> is the
+      normal figure, <b>Corner</b> shows the figure around a typical corner,
+      and <b>Variant</b> shows the figure around a variant type of corner.
+      If a sequence doesn't have a variant figure defined, the normal figure
+      will be drawn instead.
+    </p>
+    <p>
+      If <b>scale</b> is 0, the figure will fill the image.  Otherwise,
+      if <b>scale</b> is set to S, the figure will be drawn so that the
+      figure for the S-th iteration will fill the image.  If <b>adjust
+        scale</b> is selected, <b>scale</b> will automatically be reset to 
+      0 if it is less than <b>N</b>.  <b>display grid</b> adds a coordinate
+      grid to the display.  <b>display gaps</b> draws small gaps between
+      tiles, making it easier to identify individual pieces.
+    </p>
+    <p>
+      <b>Delta</b> controls changes to <b>N</b>.  If <b>Add</b> is selected, <b>Delta</b> will be added to <b>N</b>; if <b>Multiply</b> is selected, <b>N</b> will be multipled by <b>Delta</b>.  For convenience, if <b>Delta</b> is a "/" followed by a value, then it is converted to 2^(1/value).
+    </p>
+    <p>
+      When <b>Next</b> is clicked, the change specified by <b>Delta</b> will be applied to <b>N</b>, and the image will be <b>Update</b>d.  <b>Run</b> will repeatedly apply <b>Next</b>, pausing <b>Delay</b> milliseconds after each image loads.  Note that this <b>Delay</b> will be in addition to the time it takes to generate and load the image.  <b>Stop</b> cancels <b>Run</b>.
+    </p>
+    <p>
+      <b>Reset</b> resets everything to the initial state.
+    </p>
+<!--
+    <p>
+      <b>Introduction</b> runs a brief introduction.
+    </p>
+-->
+  
+
+</body></html>
